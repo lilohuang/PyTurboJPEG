@@ -19,29 +19,36 @@ from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY
 # using default library installation
 jpeg = TurboJPEG()
 
-# decode input.jpg to BGR array
+# decoding input.jpg to BGR array
 in_file = open('input.jpg', 'rb')
 bgr_array = jpeg.decode(in_file.read())
 in_file.close()
 cv2.imshow('bgr_array', bgr_array)
 cv2.waitKey(0)
 
-# encode BGR array to output.jpg with default settings.
+# direct rescaling 1/2 while decoding input.jpg to BGR array
+in_file = open('input.jpg', 'rb')
+bgr_array_half = jpeg.decode(in_file.read(), scaling_factor=(1, 2))
+in_file.close()
+cv2.imshow('bgr_array_half', bgr_array_half)
+cv2.waitKey(0)
+
+# encoding BGR array to output.jpg with default settings.
 out_file = open('output.jpg', 'wb')
 out_file.write(jpeg.encode(bgr_array))
 out_file.close()
 
-# encode BGR array to output.jpg with TJSAMP_GRAY subsample.
+# encoding BGR array to output.jpg with TJSAMP_GRAY subsample.
 out_file = open('output_gray.jpg', 'wb')
 out_file.write(jpeg.encode(bgr_array, jpeg_subsample=TJSAMP_GRAY))
 out_file.close()
 
-# encode BGR array to output.jpg with quality level 50. 
+# encoding BGR array to output.jpg with quality level 50. 
 out_file = open('output_quality_50.jpg', 'wb')
 out_file.write(jpeg.encode(bgr_array, quality=50))
 out_file.close()
 
-# decode input.jpg to grayscale array
+# decoding input.jpg to grayscale array
 in_file = open('input.jpg', 'rb')
 gray_array = jpeg.decode(in_file.read(), pixel_format=TJPF_GRAY)
 in_file.close()
