@@ -124,10 +124,12 @@ class TurboJPEG(object):
             scaled_width = width.value
             scaled_height = height.value
             if scaling_factor is not None:
-                scaled_width = int(math.ceil(
-                    scaled_width * scaling_factor[0] / scaling_factor[1]))
-                scaled_height = int(math.ceil(
-                    scaled_height * scaling_factor[0] / scaling_factor[1]))
+                def get_scaled_value(dim, num, denom):
+                    return (dim * num + denom-1) // denom
+                scaled_width = get_scaled_value(
+                    scaled_width, scaling_factor[0], scaling_factor[1])
+                scaled_height = get_scaled_value(
+                    scaled_height, scaling_factor[0], scaling_factor[1])
             img_array = np.empty(
                 [scaled_height, scaled_width, pixel_size[pixel_format]],
                 dtype=np.uint8)
@@ -164,7 +166,8 @@ class TurboJPEG(object):
 if __name__ == '__main__':
     jpeg = TurboJPEG()
     in_file = open('input.jpg', 'rb')
-    img_array = jpeg.decode(in_file.read(), pixel_format=TJPF_BGR)
+    img_array = jpeg.decode(in_file.read(), TJPF_BGR, (1,2))
+    print(img_array.shape)
     in_file.close()
     out_file = open('output.jpg', 'wb')
     out_file.write(jpeg.encode(img_array))
