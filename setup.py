@@ -10,4 +10,5 @@ setup(
     install_requires=['numpy'],
     py_modules=['turbojpeg'],
     packages=find_packages(),
+    long_description=open('README.md').read()
 )
