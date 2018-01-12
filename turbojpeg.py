@@ -166,7 +166,7 @@ class TurboJPEG(object):
 if __name__ == '__main__':
     jpeg = TurboJPEG()
     in_file = open('input.jpg', 'rb')
-    img_array = jpeg.decode(in_file.read(), TJPF_BGR, (1,2))
+    img_array = jpeg.decode(in_file.read())
     print(img_array.shape)
     in_file.close()
     out_file = open('output.jpg', 'wb')
