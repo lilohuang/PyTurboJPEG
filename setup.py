@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 setup(
     name='PyTurboJPEG',
-    version='1.0.1',
+    version='1.0.2',
     description='A Python wrapper of TurboJPEG for decoding and encoding JPEG image.',
     author='Lilo Huang',
     author_email='kuso.cc@gmail.com',
