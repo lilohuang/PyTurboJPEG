@@ -167,7 +167,6 @@ if __name__ == '__main__':
     jpeg = TurboJPEG()
     in_file = open('input.jpg', 'rb')
     img_array = jpeg.decode(in_file.read())
-    print(img_array.shape)
     in_file.close()
     out_file = open('output.jpg', 'wb')
     out_file.write(jpeg.encode(img_array))
