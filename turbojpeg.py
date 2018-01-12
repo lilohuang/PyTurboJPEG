@@ -125,7 +125,7 @@ class TurboJPEG(object):
             scaled_height = height.value
             if scaling_factor is not None:
                 def get_scaled_value(dim, num, denom):
-                    return (dim * num + denom-1) // denom
+                    return (dim * num + denom - 1) // denom
                 scaled_width = get_scaled_value(
                     scaled_width, scaling_factor[0], scaling_factor[1])
                 scaled_height = get_scaled_value(
