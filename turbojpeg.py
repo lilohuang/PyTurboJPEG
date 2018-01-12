@@ -25,6 +25,7 @@
 from ctypes import *
 import platform
 import numpy as np
+import math
 
 # default libTurboJPEG library path
 DEFAULT_LIB_PATH = {
@@ -57,7 +58,7 @@ TJSAMP_GRAY = 3
 TJSAMP_440 = 4
 
 class TurboJPEG(object):
-    """An experimental Python wrapper of TurboJPEG for decoding and encoding JPEG image."""
+    """A Python wrapper of TurboJPEG for decoding and encoding JPEG image."""
     def __init__(self, lib_path=None):
         turbo_jpeg = cdll.LoadLibrary(
             DEFAULT_LIB_PATH[platform.system()] if lib_path is None else lib_path)
@@ -88,11 +89,26 @@ class TurboJPEG(object):
         self.__free.restype = None
         self.__get_error_str = turbo_jpeg.tjGetErrorStr
         self.__get_error_str.restype = c_char_p
+        self.__scaling_factors = []
+        class ScalingFactor(Structure):
+            _fields_ = ('num', c_int), ('denom', c_int)
+        get_scaling_factors = turbo_jpeg.tjGetScalingFactors
+        get_scaling_factors.argtypes = [POINTER(c_int)]
+        get_scaling_factors.restype = POINTER(ScalingFactor)
+        num_scaling_factors = c_int()
+        scaling_factors = get_scaling_factors(byref(num_scaling_factors))
+        for i in range(num_scaling_factors.value):
+            self.__scaling_factors.append(
+                (scaling_factors[i].num, scaling_factors[i].denom))
 
-    def decode(self, jpeg_buf, pixel_format=TJPF_BGR):
+    def decode(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None):
         """decode JPEG memory buffer to numpy array."""
         handle = self.__init_decompress()
         try:
+            if scaling_factor is not None and \
+                scaling_factor not in self.__scaling_factors:
+                raise ValueError('supported scaling factors are ' +
+                    str(self.__scaling_factors))
             pixel_size = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
             width = c_int()
             height = c_int()
@@ -105,13 +121,20 @@ class TurboJPEG(object):
                 byref(jpeg_subsample), byref(jpeg_colorspace))
             if status != 0:
                 raise IOError(self.__get_error_str().decode())
+            scaled_width = width.value
+            scaled_height = height.value
+            if scaling_factor is not None:
+                scaled_width = int(math.ceil(
+                    scaled_width * scaling_factor[0] / scaling_factor[1]))
+                scaled_height = int(math.ceil(
+                    scaled_height * scaling_factor[0] / scaling_factor[1]))
             img_array = np.empty(
-                [height.value, width.value, pixel_size[pixel_format]],
+                [scaled_height, scaled_width, pixel_size[pixel_format]],
                 dtype=np.uint8)
             dest_addr = img_array.ctypes.data_as(POINTER(c_ubyte))
             status = self.__decompress(
-                handle, src_addr, jpeg_array.size, dest_addr, width.value,
-                0, height.value, pixel_format, 0)
+                handle, src_addr, jpeg_array.size, dest_addr, scaled_width,
+                0, scaled_height, pixel_format, 0)
             if status != 0:
                 raise IOError(self.__get_error_str().decode())
             return img_array
@@ -141,7 +164,7 @@ class TurboJPEG(object):
 if __name__ == '__main__':
     jpeg = TurboJPEG()
     in_file = open('input.jpg', 'rb')
-    img_array = jpeg.decode(in_file.read())
+    img_array = jpeg.decode(in_file.read(), pixel_format=TJPF_BGR)
     in_file.close()
     out_file = open('output.jpg', 'wb')
     out_file.write(jpeg.encode(img_array))
