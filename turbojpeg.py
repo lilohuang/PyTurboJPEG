@@ -1,6 +1,6 @@
 # -*- coding: UTF-8 -*-
 #
-# PyTurboJPEG - A Python wrapper of TurboJPEG for decoding and encoding JPEG image.
+# PyTurboJPEG - A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image.
 #
 # Copyright (c) 2018, LiloHuang. All rights reserved.
 #
@@ -58,7 +58,7 @@ TJSAMP_GRAY = 3
 TJSAMP_440 = 4
 
 class TurboJPEG(object):
-    """A Python wrapper of TurboJPEG for decoding and encoding JPEG image."""
+    """A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image."""
     def __init__(self, lib_path=None):
         turbo_jpeg = cdll.LoadLibrary(
             DEFAULT_LIB_PATH[platform.system()] if lib_path is None else lib_path)
