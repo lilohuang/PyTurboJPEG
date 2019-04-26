@@ -33,6 +33,11 @@ in_file.close()
 cv2.imshow('bgr_array_half', bgr_array_half)
 cv2.waitKey(0)
 
+# decoding JPEG image properties
+in_file = open('input.jpg', 'rb')
+(width, height, jpeg_subsample, jpeg_colorspace) = jpeg.decode_header(in_file.read())
+in_file.close()
+
 # encoding BGR array to output.jpg with default settings.
 out_file = open('output.jpg', 'wb')
 out_file.write(jpeg.encode(bgr_array))
