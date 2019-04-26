@@ -2,7 +2,7 @@
 #
 # PyTurboJPEG - A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image.
 #
-# Copyright (c) 2018, LiloHuang. All rights reserved.
+# Copyright (c) 2019, LiloHuang. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -10,10 +10,10 @@
 # to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
-# 
+#
 # The above copyright notice and this permission notice shall be included in all
 # copies or substantial portions of the Software.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -21,6 +21,9 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+
+__author__ = 'Lilo Huang <kuso.cc@gmail.com>'
+__version__ = '1.1.3'
 
 from ctypes import *
 import platform
@@ -33,6 +36,14 @@ DEFAULT_LIB_PATH = {
     'Linux'  : '/opt/libjpeg-turbo/lib64/libturbojpeg.so',           # for Linux
     'Windows': 'C:/libjpeg-turbo64/bin/turbojpeg.dll'                # for Windows
 }
+
+# color spaces
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+TJCS_RGB = 0
+TJCS_YCbCr = 1
+TJCS_GRAY = 2
+TJCS_CMYK = 3
+TJCS_YCCK = 4
 
 # pixel formats
 # see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
@@ -101,8 +112,29 @@ class TurboJPEG(object):
             self.__scaling_factors.append(
                 (scaling_factors[i].num, scaling_factors[i].denom))
 
+    def decode_header(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None):
+        """decodes JPEG header and returns image properties as a tuple.
+           e.g. (width, height, jpeg_subsample, jpeg_colorspace)
+        """
+        handle = self.__init_decompress()
+        try:
+            width = c_int()
+            height = c_int()
+            jpeg_subsample = c_int()
+            jpeg_colorspace = c_int()
+            jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
+            src_addr = jpeg_array.ctypes.data_as(POINTER(c_ubyte))
+            status = self.__decompress_header(
+                handle, src_addr, jpeg_array.size, byref(width), byref(height),
+                byref(jpeg_subsample), byref(jpeg_colorspace))
+            if status != 0:
+                raise IOError(self.__get_error_str().decode())
+            return (width.value, height.value, jpeg_subsample.value, jpeg_colorspace.value)
+        finally:
+            self.__destroy(handle)
+
     def decode(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None):
-        """decode JPEG memory buffer to numpy array."""
+        """decodes JPEG memory buffer to numpy array."""
         handle = self.__init_decompress()
         try:
             if scaling_factor is not None and \
@@ -144,7 +176,7 @@ class TurboJPEG(object):
             self.__destroy(handle)
 
     def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422):
-        """encode numpy array to JPEG memory buffer."""
+        """encodes numpy array to JPEG memory buffer."""
         handle = self.__init_compress()
         try:
             jpeg_buf = c_void_p()
@@ -152,7 +184,7 @@ class TurboJPEG(object):
             height, width, _ = img_array.shape
             src_addr = img_array.ctypes.data_as(POINTER(c_ubyte))
             status = self.__compress(
-                handle, src_addr, width, 0, height, pixel_format,
+                handle, src_addr, width, img_array.strides[0], height, pixel_format,
                 byref(jpeg_buf), byref(jpeg_size), jpeg_subsample, quality, 0)
             if status != 0:
                 raise IOError(self.__get_error_str().decode())
