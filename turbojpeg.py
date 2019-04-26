@@ -155,7 +155,7 @@ class TurboJPEG(object):
             height, width, _ = img_array.shape
             src_addr = img_array.ctypes.data_as(POINTER(c_ubyte))
             status = self.__compress(
-                handle, src_addr, width, 0, height, pixel_format,
+                handle, src_addr, width, img_array.strides[0], height, pixel_format,
                 byref(jpeg_buf), byref(jpeg_size), jpeg_subsample, quality, 0)
             if status != 0:
                 raise IOError(self.__get_error_str().decode())
