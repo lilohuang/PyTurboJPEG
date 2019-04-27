@@ -53,6 +53,11 @@ out_file = open('output_quality_50.jpg', 'wb')
 out_file.write(jpeg.encode(bgr_array, quality=50))
 out_file.close()
 
+# encoding BGR array to output.jpg with quality level 100 and progressive entropy coding.
+out_file = open('output_quality_100_progressive.jpg', 'wb')
+out_file.write(jpeg.encode(bgr_array, quality=100, flags=TJFLAG_PROGRESSIVE))
+out_file.close()
+
 # decoding input.jpg to grayscale array
 in_file = open('input.jpg', 'rb')
 gray_array = jpeg.decode(in_file.read(), pixel_format=TJPF_GRAY)
