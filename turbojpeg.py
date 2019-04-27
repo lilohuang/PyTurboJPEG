@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.1.3'
+__version__ = '1.1.4'
 
 from ctypes import *
 import platform
@@ -67,6 +67,17 @@ TJSAMP_422 = 1
 TJSAMP_420 = 2
 TJSAMP_GRAY = 3
 TJSAMP_440 = 4
+TJSAMP_411 = 5
+
+# miscellaneous flags
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# note: TJFLAG_NOREALLOC cannot be supported due to reallocation is needed by PyTurboJPEG.
+TJFLAG_BOTTOMUP = 2
+TJFLAG_FASTUPSAMPLE = 256
+TJFLAG_FASTDCT = 2048
+TJFLAG_ACCURATEDCT = 4096
+TJFLAG_STOPONWARNING = 8192
+TJFLAG_PROGRESSIVE = 16384
 
 class TurboJPEG(object):
     """A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image."""
@@ -133,7 +144,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def decode(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None):
+    def decode(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0):
         """decodes JPEG memory buffer to numpy array."""
         handle = self.__init_decompress()
         try:
@@ -168,14 +179,14 @@ class TurboJPEG(object):
             dest_addr = img_array.ctypes.data_as(POINTER(c_ubyte))
             status = self.__decompress(
                 handle, src_addr, jpeg_array.size, dest_addr, scaled_width,
-                0, scaled_height, pixel_format, 0)
+                0, scaled_height, pixel_format, flags)
             if status != 0:
                 raise IOError(self.__get_error_str().decode())
             return img_array
         finally:
             self.__destroy(handle)
 
-    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422):
+    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0):
         """encodes numpy array to JPEG memory buffer."""
         handle = self.__init_compress()
         try:
@@ -185,7 +196,7 @@ class TurboJPEG(object):
             src_addr = img_array.ctypes.data_as(POINTER(c_ubyte))
             status = self.__compress(
                 handle, src_addr, width, img_array.strides[0], height, pixel_format,
-                byref(jpeg_buf), byref(jpeg_size), jpeg_subsample, quality, 0)
+                byref(jpeg_buf), byref(jpeg_size), jpeg_subsample, quality, flags)
             if status != 0:
                 raise IOError(self.__get_error_str().decode())
             dest_buf = create_string_buffer(jpeg_size.value)

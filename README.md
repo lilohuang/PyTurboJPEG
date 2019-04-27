@@ -9,7 +9,7 @@ A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image.
 
 ```python
 import cv2
-from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY
+from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY, TJFLAG_PROGRESSIVE
 
 # specifying library path explicitly
 # jpeg = TurboJPEG(r'D:\turbojpeg.dll')
@@ -51,6 +51,11 @@ out_file.close()
 # encoding BGR array to output.jpg with quality level 50. 
 out_file = open('output_quality_50.jpg', 'wb')
 out_file.write(jpeg.encode(bgr_array, quality=50))
+out_file.close()
+
+# encoding BGR array to output.jpg with quality level 100 and progressive entropy coding.
+out_file = open('output_quality_100_progressive.jpg', 'wb')
+out_file.write(jpeg.encode(bgr_array, quality=100, flags=TJFLAG_PROGRESSIVE))
 out_file.close()
 
 # decoding input.jpg to grayscale array
