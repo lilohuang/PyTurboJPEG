@@ -9,7 +9,7 @@ A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image.
 
 ```python
 import cv2
-from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY
+from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY, TJFLAG_PROGRESSIVE
 
 # specifying library path explicitly
 # jpeg = TurboJPEG(r'D:\turbojpeg.dll')
