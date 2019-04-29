@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.1.4'
+__version__ = '1.1.5'
 
 from ctypes import *
 import platform
@@ -123,7 +123,7 @@ class TurboJPEG(object):
             self.__scaling_factors.append(
                 (scaling_factors[i].num, scaling_factors[i].denom))
 
-    def decode_header(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None):
+    def decode_header(self, jpeg_buf):
         """decodes JPEG header and returns image properties as a tuple.
            e.g. (width, height, jpeg_subsample, jpeg_colorspace)
         """
