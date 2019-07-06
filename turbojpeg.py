@@ -252,7 +252,7 @@ class TurboJPEG(object):
             if lib_path is not None and os.path.exists(lib_path):
                 return lib_path
         raise RuntimeError(
-            'Unable to locate turbojpeg library automatically.'
+            'Unable to locate turbojpeg library automatically. '
             'You may specify the turbojpeg library path manually.\n'
             'e.g. jpeg = TurboJPEG(lib_path)')
 
