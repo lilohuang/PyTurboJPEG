@@ -23,12 +23,15 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.1.5'
+__version__ = '1.1.6'
 
 from ctypes import *
+from ctypes.util import find_library
 import platform
 import numpy as np
 import math
+import warnings
+import os
 
 # default libTurboJPEG library path
 DEFAULT_LIB_PATH = {
@@ -36,6 +39,11 @@ DEFAULT_LIB_PATH = {
     'Linux'  : '/opt/libjpeg-turbo/lib64/libturbojpeg.so',           # for Linux
     'Windows': 'C:/libjpeg-turbo64/bin/turbojpeg.dll'                # for Windows
 }
+
+# error codes
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+TJERR_WARNING = 0
+TJERR_FATAL = 1
 
 # color spaces
 # see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
@@ -83,7 +91,7 @@ class TurboJPEG(object):
     """A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image."""
     def __init__(self, lib_path=None):
         turbo_jpeg = cdll.LoadLibrary(
-            DEFAULT_LIB_PATH[platform.system()] if lib_path is None else lib_path)
+            self.__find_turbojpeg() if lib_path is None else lib_path)
         self.__init_decompress = turbo_jpeg.tjInitDecompress
         self.__init_decompress.restype = c_void_p
         self.__init_compress = turbo_jpeg.tjInitCompress
@@ -111,6 +119,16 @@ class TurboJPEG(object):
         self.__free.restype = None
         self.__get_error_str = turbo_jpeg.tjGetErrorStr
         self.__get_error_str.restype = c_char_p
+        # tjGetErrorStr2 is only available in newer libjpeg-turbo
+        self.__get_error_str2 = getattr(turbo_jpeg, 'tjGetErrorStr2', None)
+        if self.__get_error_str2 is not None:
+            self.__get_error_str2.argtypes = [c_void_p]
+            self.__get_error_str2.restype = c_char_p
+        # tjGetErrorCode is only available in newer libjpeg-turbo
+        self.__get_error_code = getattr(turbo_jpeg, 'tjGetErrorCode', None)
+        if self.__get_error_code is not None:
+            self.__get_error_code.argtypes = [c_void_p]
+            self.__get_error_code.restype = c_int
         self.__scaling_factors = []
         class ScalingFactor(Structure):
             _fields_ = ('num', c_int), ('denom', c_int)
@@ -139,7 +157,7 @@ class TurboJPEG(object):
                 handle, src_addr, jpeg_array.size, byref(width), byref(height),
                 byref(jpeg_subsample), byref(jpeg_colorspace))
             if status != 0:
-                raise IOError(self.__get_error_str().decode())
+                self.__report_error(handle)
             return (width.value, height.value, jpeg_subsample.value, jpeg_colorspace.value)
         finally:
             self.__destroy(handle)
@@ -163,7 +181,7 @@ class TurboJPEG(object):
                 handle, src_addr, jpeg_array.size, byref(width), byref(height),
                 byref(jpeg_subsample), byref(jpeg_colorspace))
             if status != 0:
-                raise IOError(self.__get_error_str().decode())
+                self.__report_error(handle)
             scaled_width = width.value
             scaled_height = height.value
             if scaling_factor is not None:
@@ -181,7 +199,7 @@ class TurboJPEG(object):
                 handle, src_addr, jpeg_array.size, dest_addr, scaled_width,
                 0, scaled_height, pixel_format, flags)
             if status != 0:
-                raise IOError(self.__get_error_str().decode())
+                self.__report_error(handle)
             return img_array
         finally:
             self.__destroy(handle)
@@ -198,13 +216,45 @@ class TurboJPEG(object):
                 handle, src_addr, width, img_array.strides[0], height, pixel_format,
                 byref(jpeg_buf), byref(jpeg_size), jpeg_subsample, quality, flags)
             if status != 0:
-                raise IOError(self.__get_error_str().decode())
+                self.__report_error(handle)
             dest_buf = create_string_buffer(jpeg_size.value)
             memmove(dest_buf, jpeg_buf.value, jpeg_size.value)
             self.__free(jpeg_buf)
             return dest_buf.raw
         finally:
             self.__destroy(handle)
+
+    def __report_error(self, handle):
+        """reports error while error occurred"""
+        if self.__get_error_code is not None:
+            # using new error handling logic if possible
+            if self.__get_error_code(handle) == TJERR_WARNING:
+                warnings.warn(self.__get_error_string(handle))
+                return
+        # fatal error occurred
+        raise IOError(self.__get_error_string(handle))
+
+    def __get_error_string(self, handle):
+        """returns error string"""
+        if self.__get_error_str2 is not None:
+            # using new interface if possible
+            return self.__get_error_str2(handle).decode()
+        # fallback to old interface
+        return self.__get_error_str().decode()
+
+    def __find_turbojpeg(self):
+        """returns default turbojpeg library path if possible"""
+        candidate_lib_paths = [
+            find_library('turbojpeg'),
+            DEFAULT_LIB_PATH[platform.system()]
+        ]
+        for lib_path in candidate_lib_paths:
+            if lib_path is not None and os.path.exists(lib_path):
+                return lib_path
+        raise RuntimeError(
+            'Unable to locate turbojpeg library automatically.'
+            'You may specify the turbojpeg library path manually.\n'
+            'e.g. jpeg = TurboJPEG(lib_path)')
 
 if __name__ == '__main__':
     jpeg = TurboJPEG()
