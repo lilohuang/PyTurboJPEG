@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.2.0'
+__version__ = '1.3.0'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -152,7 +152,7 @@ class TurboJPEG(object):
             jpeg_subsample = c_int()
             jpeg_colorspace = c_int()
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
-            src_addr = jpeg_array.ctypes.data_as(POINTER(c_ubyte))
+            src_addr = self.__getaddr(jpeg_array)
             status = self.__decompress_header(
                 handle, src_addr, jpeg_array.size, byref(width), byref(height),
                 byref(jpeg_subsample), byref(jpeg_colorspace))
@@ -176,7 +176,7 @@ class TurboJPEG(object):
             jpeg_subsample = c_int()
             jpeg_colorspace = c_int()
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
-            src_addr = jpeg_array.ctypes.data_as(POINTER(c_ubyte))
+            src_addr = self.__getaddr(jpeg_array)
             status = self.__decompress_header(
                 handle, src_addr, jpeg_array.size, byref(width), byref(height),
                 byref(jpeg_subsample), byref(jpeg_colorspace))
@@ -194,7 +194,7 @@ class TurboJPEG(object):
             img_array = np.empty(
                 [scaled_height, scaled_width, pixel_size[pixel_format]],
                 dtype=np.uint8)
-            dest_addr = img_array.ctypes.data_as(POINTER(c_ubyte))
+            dest_addr = self.__getaddr(img_array)
             status = self.__decompress(
                 handle, src_addr, jpeg_array.size, dest_addr, scaled_width,
                 0, scaled_height, pixel_format, flags)
@@ -211,7 +211,7 @@ class TurboJPEG(object):
             jpeg_buf = c_void_p()
             jpeg_size = c_ulong()
             height, width, _ = img_array.shape
-            src_addr = img_array.ctypes.data_as(POINTER(c_ubyte))
+            src_addr = self.__getaddr(img_array)
             status = self.__compress(
                 handle, src_addr, width, img_array.strides[0], height, pixel_format,
                 byref(jpeg_buf), byref(jpeg_size), jpeg_subsample, quality, flags)
@@ -255,6 +255,9 @@ class TurboJPEG(object):
             'Unable to locate turbojpeg library automatically. '
             'You may specify the turbojpeg library path manually.\n'
             'e.g. jpeg = TurboJPEG(lib_path)')
+
+    def __getaddr(self, array):
+        return cast(array.__array_interface__['data'][0], POINTER(c_ubyte))
 
 if __name__ == '__main__':
     jpeg = TurboJPEG()
