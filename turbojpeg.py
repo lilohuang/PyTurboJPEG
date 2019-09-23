@@ -256,8 +256,9 @@ class TurboJPEG(object):
             'You may specify the turbojpeg library path manually.\n'
             'e.g. jpeg = TurboJPEG(lib_path)')
 
-    def __getaddr(self, array):
-        return cast(array.__array_interface__['data'][0], POINTER(c_ubyte))
+    def __getaddr(self, nda):
+        """returns the memory address for a given ndarray"""
+        return cast(nda.__array_interface__['data'][0], POINTER(c_ubyte))
 
 if __name__ == '__main__':
     jpeg = TurboJPEG()
