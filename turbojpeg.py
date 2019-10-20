@@ -34,10 +34,13 @@ import warnings
 import os
 
 # default libTurboJPEG library path
-DEFAULT_LIB_PATH = {
-    'Darwin' : '/usr/local/opt/jpeg-turbo/lib/libturbojpeg.dylib',   # for Mac OS X
-    'Linux'  : '/opt/libjpeg-turbo/lib64/libturbojpeg.so',           # for Linux
-    'Windows': 'C:/libjpeg-turbo64/bin/turbojpeg.dll'                # for Windows
+DEFAULT_LIB_PATHS = {
+    'Darwin': ['/usr/local/opt/jpeg-turbo/lib/libturbojpeg.dylib'],
+    'Linux': [
+        '/usr/lib/x86_64-linux-gnu/libturbojpeg.so.0',
+        '/opt/libjpeg-turbo/lib64/libturbojpeg.so'
+    ],
+    'Windows': ['C:/libjpeg-turbo64/bin/turbojpeg.dll']
 }
 
 # error codes
@@ -244,12 +247,11 @@ class TurboJPEG(object):
 
     def __find_turbojpeg(self):
         """returns default turbojpeg library path if possible"""
-        candidate_lib_paths = [
-            find_library('turbojpeg'),
-            DEFAULT_LIB_PATH[platform.system()]
-        ]
-        for lib_path in candidate_lib_paths:
-            if lib_path is not None and os.path.exists(lib_path):
+        lib_path = find_library('turbojpeg')
+        if lib_path is not None:
+            return lib_path
+        for lib_path in DEFAULT_LIB_PATHS[platform.system()]:
+            if os.path.exists(lib_path):
                 return lib_path
         raise RuntimeError(
             'Unable to locate turbojpeg library automatically. '
