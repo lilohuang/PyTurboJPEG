@@ -253,6 +253,12 @@ class TurboJPEG(object):
         for lib_path in DEFAULT_LIB_PATHS[platform.system()]:
             if os.path.exists(lib_path):
                 return lib_path
+        if platform.system() == 'Linux' and 'LD_LIBRARY_PATH' in os.environ:
+            ld_library_path = os.environ['LD_LIBRARY_PATH']
+            for path in ld_library_path.split(':'):
+                lib_path = os.path.join(path, 'libturbojpeg.so.0')
+                if os.path.exists(lib_path):
+                    return lib_path
         raise RuntimeError(
             'Unable to locate turbojpeg library automatically. '
             'You may specify the turbojpeg library path manually.\n'
