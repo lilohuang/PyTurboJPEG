@@ -99,6 +99,9 @@ class TurboJPEG(object):
         self.__init_decompress.restype = c_void_p
         self.__init_compress = turbo_jpeg.tjInitCompress
         self.__init_compress.restype = c_void_p
+        self.__buffer_size_YUV2 = turbo_jpeg.tjBufSizeYUV2
+        self.__buffer_size_YUV2.argtypes = [c_int, c_int, c_int, c_int]
+        self.__buffer_size_YUV2.restype = c_ulong
         self.__destroy = turbo_jpeg.tjDestroy
         self.__destroy.argtypes = [c_void_p]
         self.__destroy.restype = c_int
@@ -112,11 +115,21 @@ class TurboJPEG(object):
             c_void_p, POINTER(c_ubyte), c_ulong, POINTER(c_ubyte),
             c_int, c_int, c_int, c_int, c_int]
         self.__decompress.restype = c_int
+        self.__decompressToYUV2 = turbo_jpeg.tjDecompressToYUV2
+        self.__decompressToYUV2.argtypes = [
+            c_void_p, POINTER(c_ubyte), c_ulong, POINTER(c_ubyte),
+            c_int, c_int, c_int, c_int]
+        self.__decompressToYUV2.restype = c_int
         self.__compress = turbo_jpeg.tjCompress2
         self.__compress.argtypes = [
             c_void_p, POINTER(c_ubyte), c_int, c_int, c_int, c_int,
             POINTER(c_void_p), POINTER(c_ulong), c_int, c_int, c_int]
         self.__compress.restype = c_int
+        self.__compressFromYUV = turbo_jpeg.tjCompressFromYUV
+        self.__compressFromYUV.argtypes = [
+            c_void_p, POINTER(c_ubyte), c_int, c_int, c_int, c_int, POINTER(c_void_p),
+            POINTER(c_ulong), c_int, c_int]
+        self.__compressFromYUV.restype = c_int
         self.__free = turbo_jpeg.tjFree
         self.__free.argtypes = [c_void_p]
         self.__free.restype = None
@@ -169,31 +182,11 @@ class TurboJPEG(object):
         """decodes JPEG memory buffer to numpy array."""
         handle = self.__init_decompress()
         try:
-            if scaling_factor is not None and \
-                scaling_factor not in self.__scaling_factors:
-                raise ValueError('supported scaling factors are ' +
-                    str(self.__scaling_factors))
             pixel_size = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
-            width = c_int()
-            height = c_int()
-            jpeg_subsample = c_int()
-            jpeg_colorspace = c_int()
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
-            status = self.__decompress_header(
-                handle, src_addr, jpeg_array.size, byref(width), byref(height),
-                byref(jpeg_subsample), byref(jpeg_colorspace))
-            if status != 0:
-                self.__report_error(handle)
-            scaled_width = width.value
-            scaled_height = height.value
-            if scaling_factor is not None:
-                def get_scaled_value(dim, num, denom):
-                    return (dim * num + denom - 1) // denom
-                scaled_width = get_scaled_value(
-                    scaled_width, scaling_factor[0], scaling_factor[1])
-                scaled_height = get_scaled_value(
-                    scaled_height, scaling_factor[0], scaling_factor[1])
+            scaled_width, scaled_height, jpeg_subsample, jpeg_colorspace = \
+                self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
             img_array = np.empty(
                 [scaled_height, scaled_width, pixel_size[pixel_format]],
                 dtype=np.uint8)
@@ -226,6 +219,69 @@ class TurboJPEG(object):
             return dest_buf.raw
         finally:
             self.__destroy(handle)
+
+    """
+    @jpeg_buf           buffer containing jpeg image bytes
+    @scaling_factor     optional image scaling
+    @quality            optional image quality to be reencoded with
+    @flags
+    """
+    def scale_with_quality(self, jpeg_buf, scaling_factor=None, quality=85, flags=0):
+        """decompresstoYUV with scale factor, recompresstoYUV with quality factor"""
+        handle = self.__init_decompress()
+        try:
+            jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
+            src_addr = self.__getaddr(jpeg_array)
+            scaled_width, scaled_height, jpeg_subsample, _ = self.__get_header_and_dimensions(
+                handle, jpeg_array.size, src_addr, scaling_factor)
+            buffer_YUV_size = self.__buffer_size_YUV2(
+                scaled_height, 4, scaled_width, jpeg_subsample)
+            img_array = np.empty([buffer_YUV_size])
+            dest_addr = self.__getaddr(img_array)
+            status = self.__decompressToYUV2(
+                handle, src_addr, jpeg_array.size, dest_addr, scaled_width, 4, scaled_height, flags)
+            if status != 0:
+                self.__report_error(handle)
+                return
+            self.__destroy(handle)
+
+            handle = self.__init_compress()
+            jpeg_buf = c_void_p()
+            jpeg_size = c_ulong()
+            status = self.__compressFromYUV(
+                handle, dest_addr, scaled_width, 4, scaled_height, jpeg_subsample, byref(jpeg_buf),
+                byref(jpeg_size), quality, flags)
+            if status != 0:
+                self.__report_error(handle)
+            dest_buf = create_string_buffer(jpeg_size.value)
+            memmove(dest_buf, jpeg_buf.value, jpeg_size.value)
+            self.__free(jpeg_buf)
+            return dest_buf.raw
+        finally:
+            self.__destroy(handle)
+
+    def __get_header_and_dimensions(self, handle, jpeg_array_size, src_addr, scaling_factor):
+        if scaling_factor is not None and \
+            scaling_factor not in self.__scaling_factors:
+            raise ValueError('supported scaling factors are ' +
+                str(self.__scaling_factors))
+        width = c_int()
+        height = c_int()
+        jpeg_colorspace = c_int()
+        jpeg_subsample = c_int()
+        status = self.__decompress_header(
+            handle, src_addr, jpeg_array_size, byref(width), byref(height),
+            byref(jpeg_subsample), byref(jpeg_colorspace))
+        if status != 0:
+            self.__report_error(handle)
+        scaled_width = width.value
+        scaled_height = height.value
+        if scaling_factor is not None:
+            def get_scaled_value(dim, num, denom):
+                return (dim * num + denom - 1) // denom
+            scaled_width = get_scaled_value(scaled_width, scaling_factor[0], scaling_factor[1])
+            scaled_height = get_scaled_value(scaled_height, scaling_factor[0], scaling_factor[1])
+        return scaled_width, scaled_height, jpeg_subsample, jpeg_colorspace
 
     def __report_error(self, handle):
         """reports error while error occurred"""
@@ -268,14 +324,24 @@ class TurboJPEG(object):
         """returns the memory address for a given ndarray"""
         return cast(nda.__array_interface__['data'][0], POINTER(c_ubyte))
 
+
 if __name__ == '__main__':
     jpeg = TurboJPEG()
+
     in_file = open('input.jpg', 'rb')
     img_array = jpeg.decode(in_file.read())
     in_file.close()
-    out_file = open('output.jpg', 'wb')
+    out_file = open('output5.jpg', 'wb')
     out_file.write(jpeg.encode(img_array))
     out_file.close()
+    """
     import cv2
     cv2.imshow('image', img_array)
     cv2.waitKey(0)
+
+    in_file = open('input.jpg', 'rb')
+    out_file = open('output4.jpg', 'wb')
+    out_file.write(jpeg.scale_with_quality(in_file.read(), scaling_factor=(1,4), quality=70))
+    in_file.close()
+    out_file.close()
+    """
