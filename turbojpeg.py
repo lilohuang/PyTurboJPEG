@@ -349,7 +349,7 @@ class TurboJPEG(object):
             self.__free(dest_array)
             if status != 0:
                 self.__report_error(handle)
-            return dest_buf
+            return dest_buf.raw
         finally:
             self.__destroy(handle)
 
