@@ -68,7 +68,7 @@ cv2.waitKey(0)
 # scale with quality but leaves out the color conversion step
 in_file = open('input.jpg', 'rb')
 out_file = open('scaled_output.jpg', 'wb')
-out_file.write(jpeg.scale_with_quality(in_file.read(), scaling_factor=(1,4), quality=70))
+out_file.write(jpeg.scale_with_quality(in_file.read(), scaling_factor=(1, 4), quality=70))
 out_file.close()
 in_file.close()
 
