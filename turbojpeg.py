@@ -180,14 +180,15 @@ class TurboJPEG(object):
         self.__compress.restype = c_int
         self.__compressFromYUV = turbo_jpeg.tjCompressFromYUV
         self.__compressFromYUV.argtypes = [
-            c_void_p, POINTER(c_ubyte), c_int, c_int, c_int, c_int, POINTER(c_void_p),
-            POINTER(c_ulong), c_int, c_int]
+            c_void_p, POINTER(c_ubyte), c_int, c_int, c_int, c_int,
+            POINTER(c_void_p), POINTER(c_ulong), c_int, c_int]
         self.__compressFromYUV.restype = c_int
         self.__init_transform = turbo_jpeg.tjInitTransform
         self.__init_transform.restype = c_void_p
         self.__transform = turbo_jpeg.tjTransform
-        self.__transform.argtypes = [c_void_p, POINTER(c_ubyte), c_ulong, c_int,
-            POINTER(c_void_p), POINTER(c_ulong), POINTER(TransformStruct), c_int]
+        self.__transform.argtypes = [
+            c_void_p, POINTER(c_ubyte), c_ulong, c_int, POINTER(c_void_p),
+            POINTER(c_ulong), POINTER(TransformStruct), c_int]
         self.__transform.restype = c_int
         self.__free = turbo_jpeg.tjFree
         self.__free.argtypes = [c_void_p]
@@ -244,7 +245,7 @@ class TurboJPEG(object):
             pixel_size = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
-            scaled_width, scaled_height, jpeg_subsample, jpeg_colorspace = \
+            scaled_width, scaled_height, _, _ = \
                 self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
             img_array = np.empty(
                 [scaled_height, scaled_width, pixel_size[pixel_format]],
@@ -327,13 +328,13 @@ class TurboJPEG(object):
                 byref(jpeg_subsample), byref(jpeg_colorspace))
             if status != 0:
                 self.__report_error(handle)
-            x,w = self.__axis_to_image_boundaries(
+            x, w = self.__axis_to_image_boundaries(
                 x, w, width.value, preserve, tjMCUWidth[jpeg_subsample.value])
-            y,h = self.__axis_to_image_boundaries(
+            y, h = self.__axis_to_image_boundaries(
                 y, h, height.value, preserve, tjMCUHeight[jpeg_subsample.value])
             dest_array = c_void_p()
             dest_size = c_ulong()
-            region = CroppingRegion(x,y,w,h)
+            region = CroppingRegion(x, y, w, h)
             crop_transform = TransformStruct(region, TJXOP_NONE,
                 TJXOPT_CROP | (gray and TJXOPT_GRAY))
             status = self.__transform(
@@ -368,8 +369,10 @@ class TurboJPEG(object):
         if scaling_factor is not None:
             def get_scaled_value(dim, num, denom):
                 return (dim * num + denom - 1) // denom
-            scaled_width = get_scaled_value(scaled_width, scaling_factor[0], scaling_factor[1])
-            scaled_height = get_scaled_value(scaled_height, scaling_factor[0], scaling_factor[1])
+            scaled_width = get_scaled_value(
+                scaled_width, scaling_factor[0], scaling_factor[1])
+            scaled_height = get_scaled_value(
+                scaled_height, scaling_factor[0], scaling_factor[1])
         return scaled_width, scaled_height, jpeg_subsample, jpeg_colorspace
 
     def __axis_to_image_boundaries(self, a, b, img_boundary, preserve, mcuBlock):
