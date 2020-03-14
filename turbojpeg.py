@@ -132,16 +132,13 @@ TJFLAG_PROGRESSIVE = 16384
 class CroppingRegion(Structure):
     _fields_ = [("x", c_int), ("y", c_int), ("w", c_int), ("h", c_int)]
 
-
 class TransformStruct(Structure):
     _fields_ = [("r", CroppingRegion), ("op", c_int), ("options", c_int), ("data", c_void_p),
         ("customFilter", c_void_p)]
 
-
 CUSTOMFILTER = CFUNCTYPE(
     c_int, POINTER(c_short), CroppingRegion, CroppingRegion, c_int, c_int,
     POINTER(TransformStruct))
-
 
 class TurboJPEG(object):
     """A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image."""
@@ -431,24 +428,14 @@ class TurboJPEG(object):
         """returns the memory address for a given ndarray"""
         return cast(nda.__array_interface__['data'][0], POINTER(c_ubyte))
 
-
 if __name__ == '__main__':
     jpeg = TurboJPEG()
-
     in_file = open('input.jpg', 'rb')
     img_array = jpeg.decode(in_file.read())
     in_file.close()
-    out_file = open('output5.jpg', 'wb')
+    out_file = open('output.jpg', 'wb')
     out_file.write(jpeg.encode(img_array))
     out_file.close()
-    """
     import cv2
     cv2.imshow('image', img_array)
     cv2.waitKey(0)
-
-    in_file = open('input.jpg', 'rb')
-    out_file = open('output4.jpg', 'wb')
-    out_file.write(jpeg.scale_with_quality(in_file.read(), scaling_factor=(1,4), quality=70))
-    in_file.close()
-    out_file.close()
-    """
