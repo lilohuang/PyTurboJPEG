@@ -297,7 +297,6 @@ class TurboJPEG(object):
                 self.__report_error(handle)
                 return
             self.__destroy(handle)
-
             handle = self.__init_compress()
             jpeg_buf = c_void_p()
             jpeg_size = c_ulong()
@@ -337,7 +336,6 @@ class TurboJPEG(object):
             region = CroppingRegion(x,y,w,h)
             crop_transform = TransformStruct(region, TJXOP_NONE,
                 TJXOPT_CROP | (gray and TJXOPT_GRAY))
-
             status = self.__transform(
                 handle, src_addr, jpeg_array.size, 1, byref(dest_array), byref(dest_size),
                 byref(crop_transform), 0)
