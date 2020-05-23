@@ -90,14 +90,14 @@ out_file.close()
 
 ### Linux
 - RHEL/CentOS/Fedora
-    - Download [libjpeg-turbo.repo](https://libjpeg-turbo.org/pmwiki/uploads/Downloads/libjpeg-turbo.repo) to /etc/yum.repos.d/
-    - sudo yum install libjpeg-turbo-official
-    - pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
+  - Download [libjpeg-turbo.repo](https://libjpeg-turbo.org/pmwiki/uploads/Downloads/libjpeg-turbo.repo) to /etc/yum.repos.d/
+  - sudo yum install libjpeg-turbo-official
+  - pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
 
 - Ubuntu
-    - sudo apt-get update
-    - sudo apt-get install libturbojpeg*
-    - pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
+  - sudo apt-get update
+  - sudo apt-get install libturbojpeg*
+  - pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
 
 
 ## Benchmark 
