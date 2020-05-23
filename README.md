@@ -96,7 +96,7 @@ out_file.close()
 
 - Ubuntu
   - sudo apt-get update
-  - sudo apt-get install libturbojpeg*
+  - sudo apt-get install libturbojpeg
   - pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
 
 
