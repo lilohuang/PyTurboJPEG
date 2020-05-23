@@ -89,9 +89,15 @@ out_file.close()
 - pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
 
 ### Linux
-- Download [libjpeg-turbo.repo](https://libjpeg-turbo.org/pmwiki/uploads/Downloads/libjpeg-turbo.repo) to /etc/yum.repos.d/
-- sudo yum install libjpeg-turbo-official
-- pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
+- RHEL/CentOS/Fedora
+>>- Download [libjpeg-turbo.repo](https://libjpeg-turbo.org/pmwiki/uploads/Downloads/libjpeg-turbo.repo) to /etc/yum.repos.d/
+>>- sudo yum install libjpeg-turbo-official
+>>- pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
+
+- Ubuntu
+>>- sudo apt-get update
+>>- sudo apt-get install libturbojpeg
+>>- pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
 
 
 ## Benchmark 
