@@ -429,6 +429,10 @@ class TurboJPEG(object):
         """returns the memory address for a given ndarray"""
         return cast(nda.__array_interface__['data'][0], POINTER(c_ubyte))
 
+    @property
+    def scaling_factors (self):
+        return self.__scaling_factors
+
 if __name__ == '__main__':
     jpeg = TurboJPEG()
     in_file = open('input.jpg', 'rb')
