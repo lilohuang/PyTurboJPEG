@@ -2,7 +2,7 @@
 #
 # PyTurboJPEG - A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image.
 #
-# Copyright (c) 2018-2020, Lilo Huang. All rights reserved.
+# Copyright (c) 2018-2021, Lilo Huang. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.4.1'
+__version__ = '1.4.2'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -430,7 +430,7 @@ class TurboJPEG(object):
         return cast(nda.__array_interface__['data'][0], POINTER(c_ubyte))
 
     @property
-    def scaling_factors (self):
+    def scaling_factors(self):
         return self.__scaling_factors
 
 if __name__ == '__main__':
