@@ -205,7 +205,6 @@ class TurboJPEG(object):
         if self.__get_error_code is not None:
             self.__get_error_code.argtypes = [c_void_p]
             self.__get_error_code.restype = c_int
-        self.__scaling_factors = []
         class ScalingFactor(Structure):
             _fields_ = ('num', c_int), ('denom', c_int)
         get_scaling_factors = turbo_jpeg.tjGetScalingFactors
@@ -213,9 +212,10 @@ class TurboJPEG(object):
         get_scaling_factors.restype = POINTER(ScalingFactor)
         num_scaling_factors = c_int()
         scaling_factors = get_scaling_factors(byref(num_scaling_factors))
-        for i in range(num_scaling_factors.value):
-            self.__scaling_factors.append(
-                (scaling_factors[i].num, scaling_factors[i].denom))
+        self.__scaling_factors = frozenset(
+            (scaling_factors[i].num, scaling_factors[i].denom)
+            for i in range(num_scaling_factors.value)
+        )
 
     def decode_header(self, jpeg_buf):
         """decodes JPEG header and returns image properties as a tuple.
@@ -428,6 +428,10 @@ class TurboJPEG(object):
     def __getaddr(self, nda):
         """returns the memory address for a given ndarray"""
         return cast(nda.__array_interface__['data'][0], POINTER(c_ubyte))
+
+    @property
+    def scaling_factors (self):
+        return self.__scaling_factors
 
 if __name__ == '__main__':
     jpeg = TurboJPEG()
