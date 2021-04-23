@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.4.2'
+__version__ = '1.4.3'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -128,6 +128,7 @@ TJFLAG_FASTDCT = 2048
 TJFLAG_ACCURATEDCT = 4096
 TJFLAG_STOPONWARNING = 8192
 TJFLAG_PROGRESSIVE = 16384
+TJFLAG_LIMITSCANS = 32768
 
 class CroppingRegion(Structure):
     _fields_ = [("x", c_int), ("y", c_int), ("w", c_int), ("h", c_int)]
