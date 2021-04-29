@@ -38,7 +38,17 @@ scaling_factors = jpeg.scaling_factors
 
 # decoding JPEG image properties
 in_file = open('input.jpg', 'rb')
-(width, height, jpeg_subsample, jpeg_colorspace) = jpeg.decode_header(in_file.read())
+width, height, jpeg_subsample, jpeg_colorspace = jpeg.decode_header(in_file.read())
+in_file.close()
+
+# decoding input.jpg to YUV array
+in_file = open('input.jpg', 'rb')
+buffer_array, plane_sizes = jpeg.decode_to_yuv(in_file.read())
+in_file.close()
+
+# decoding input.jpg to YUV planes
+in_file = open('input.jpg', 'rb')
+planes = jpeg.decode_to_yuv_planes(in_file.read())
 in_file.close()
 
 # encoding BGR array to output.jpg with default settings.
