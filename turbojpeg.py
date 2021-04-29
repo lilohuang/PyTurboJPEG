@@ -156,6 +156,12 @@ class TurboJPEG(object):
         self.__buffer_size_YUV2 = turbo_jpeg.tjBufSizeYUV2
         self.__buffer_size_YUV2.argtypes = [c_int, c_int, c_int, c_int]
         self.__buffer_size_YUV2.restype = c_ulong
+        self.__plane_width = turbo_jpeg.tjPlaneWidth
+        self.__plane_width.argtypes = [c_int, c_int, c_int]
+        self.__plane_width.restype = c_int
+        self.__plane_height = turbo_jpeg.tjPlaneHeight
+        self.__plane_height.argtypes = [c_int, c_int, c_int]
+        self.__plane_height.restype = c_int
         self.__destroy = turbo_jpeg.tjDestroy
         self.__destroy.argtypes = [c_void_p]
         self.__destroy.restype = c_int
@@ -174,6 +180,11 @@ class TurboJPEG(object):
             c_void_p, POINTER(c_ubyte), c_ulong, POINTER(c_ubyte),
             c_int, c_int, c_int, c_int]
         self.__decompressToYUV2.restype = c_int
+        self.__decompressToYUVPlanes = turbo_jpeg.tjDecompressToYUVPlanes
+        self.__decompressToYUVPlanes.argtypes = [
+            c_void_p, POINTER(c_ubyte), c_ulong, POINTER(POINTER(c_ubyte)),
+            c_int, POINTER(c_int), c_int, c_int]
+        self.__decompressToYUVPlanes.restype = c_int
         self.__compress = turbo_jpeg.tjCompress2
         self.__compress.argtypes = [
             c_void_p, POINTER(c_ubyte), c_int, c_int, c_int, c_int,
@@ -258,6 +269,63 @@ class TurboJPEG(object):
             if status != 0:
                 self.__report_error(handle)
             return img_array
+        finally:
+            self.__destroy(handle)
+
+    def decode_to_yuv(self, jpeg_buf, scaling_factor=None, pad=4, flags=0):
+        """decodes JPEG memory buffer to yuv array."""
+        handle = self.__init_decompress()
+        try:
+            jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
+            src_addr = self.__getaddr(jpeg_array)
+            scaled_width, scaled_height, jpeg_subsample, _ = \
+                self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
+            buffer_size = self.__buffer_size_YUV2(scaled_width, pad, scaled_height, jpeg_subsample)
+            buffer_array = np.empty(buffer_size, dtype=np.uint8)
+            dest_addr = self.__getaddr(buffer_array)
+            status = self.__decompressToYUV2(
+                handle, src_addr, jpeg_array.size, dest_addr, scaled_width,
+                pad, scaled_height, flags)
+            if status != 0:
+                self.__report_error(handle)
+            plane_sizes = list()
+            plane_sizes.append((scaled_height, scaled_width))
+            if jpeg_subsample != TJSAMP_GRAY:
+                for i in range(1, 3):
+                    plane_sizes.append((
+                        self.__plane_height(i, scaled_height, jpeg_subsample),
+                        self.__plane_width(i, scaled_width, jpeg_subsample)))
+            return buffer_array, plane_sizes
+        finally:
+            self.__destroy(handle)
+
+    def decode_to_yuv_planes(self, jpeg_buf, scaling_factor=None, strides=(0, 0, 0), flags=0):
+        """decodes JPEG memory buffer to yuv planes."""
+        handle = self.__init_decompress()
+        try:
+            jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
+            src_addr = self.__getaddr(jpeg_array)
+            scaled_width, scaled_height, jpeg_subsample, _ = \
+                self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
+            num_planes = 3
+            if jpeg_subsample == TJSAMP_GRAY:
+                num_planes = 1
+            strides_addr = (c_int * num_planes)()
+            dest_addr = (POINTER(c_ubyte) * num_planes)()
+            planes = list()
+            for i in range(num_planes):
+                if strides[i] == 0:
+                    strides_addr[i] = self.__plane_width(i, scaled_width, jpeg_subsample)
+                else:
+                    strides_addr[i] = strides[i]
+                planes.append(np.empty(
+                    (self.__plane_height(i, scaled_height, jpeg_subsample), strides_addr[i]), dtype=np.uint8))
+                dest_addr[i] = self.__getaddr(planes[i])
+            status = self.__decompressToYUVPlanes(
+                handle, src_addr, jpeg_array.size, dest_addr, scaled_width, strides_addr, scaled_height, flags)
+            if status != 0:
+                self.__report_error(handle)
+            return planes
         finally:
             self.__destroy(handle)
 
