@@ -9,7 +9,7 @@ A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image.
 
 ```python
 import cv2
-from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY, TJFLAG_PROGRESSIVE
+from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY, TJFLAG_PROGRESSIVE, TJFLAG_FASTUPSAMPLE, TJFLAG_FASTDCT
 
 # specifying library path explicitly
 # jpeg = TurboJPEG(r'D:\turbojpeg.dll')
@@ -22,6 +22,13 @@ jpeg = TurboJPEG()
 # decoding input.jpg to BGR array
 in_file = open('input.jpg', 'rb')
 bgr_array = jpeg.decode(in_file.read())
+in_file.close()
+cv2.imshow('bgr_array', bgr_array)
+cv2.waitKey(0)
+
+# decoding input.jpg to BGR array with fast upsample and fast DCT. (i.e. fastest speed but lower accuracy)
+in_file = open('input.jpg', 'rb')
+bgr_array = jpeg.decode(in_file.read(), flags=TJFLAG_FASTUPSAMPLE|TJFLAG_FASTDCT)
 in_file.close()
 cv2.imshow('bgr_array', bgr_array)
 cv2.waitKey(0)
