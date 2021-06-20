@@ -98,6 +98,49 @@ out_file.write(jpeg.crop(open('input.jpg', 'rb').read(), 8, 8, 320, 240))
 out_file.close()
 ```
 
+```python
+# using PyTurboJPEG with ExifRead to transpose an image if the image has an EXIF Orientation tag.
+#
+# pip install PyTurboJPEG -U
+# pip install exifread -U
+
+import cv2
+import numpy as np
+import exifread
+from turbojpeg import TurboJPEG
+
+def transposeImage(image, orientation):
+    """See Orientation in https://www.exif.org/Exif2-2.PDF for details."""
+    if orientation == None: return image
+    val = orientation.values[0]
+    if val == 1: return image
+    elif val == 2: return np.fliplr(image)
+    elif val == 3: return np.rot90(image, 2)
+    elif val == 4: return np.flipud(image)
+    elif val == 5: return np.rot90(np.flipud(image), -1)
+    elif val == 6: return np.rot90(image, -1)
+    elif val == 7: return np.rot90(np.flipud(image))
+    elif val == 8: return np.rot90(image)
+
+# using default library installation
+turbo_jpeg = TurboJPEG()
+# open jpeg file
+in_file = open('foobar.jpg', 'rb')
+# parse orientation
+orientation = exifread.process_file(in_file).get('Image Orientation', None)
+# seek file position back to 0 before decoding JPEG image
+in_file.seek(0)
+# start to decode the JPEG file
+image = turbo_jpeg.decode(in_file.read())
+# transpose image based on EXIF Orientation tag
+transposed_image = transposeImage(image, orientation)
+# close the file since it's no longer needed.
+in_file.close()
+
+cv2.imshow('transposed_image', transposed_image)
+cv2.waitKey(0)
+```
+
 ## Installation
 
 ### macOS
@@ -118,7 +161,6 @@ out_file.close()
   - sudo apt-get update
   - sudo apt-get install libturbojpeg
   - pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
-
 
 ## Benchmark 
 
