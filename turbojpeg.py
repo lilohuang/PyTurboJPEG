@@ -420,10 +420,13 @@ class TurboJPEG(object):
 
     def __get_header_and_dimensions(self, handle, jpeg_array_size, src_addr, scaling_factor):
         """returns scaled image dimensions and header data"""
+        """
+        # As long as using libturbojpeg, scalling factors are actually dynamic and doesn't need to be limited.
         if scaling_factor is not None and \
             scaling_factor not in self.__scaling_factors:
             raise ValueError('supported scaling factors are ' +
                 str(self.__scaling_factors))
+        """
         width = c_int()
         height = c_int()
         jpeg_colorspace = c_int()
@@ -442,7 +445,7 @@ class TurboJPEG(object):
                 scaled_width, scaling_factor[0], scaling_factor[1])
             scaled_height = get_scaled_value(
                 scaled_height, scaling_factor[0], scaling_factor[1])
-        return scaled_width, scaled_height, jpeg_subsample, jpeg_colorspace
+        return int(scaled_width), int(scaled_height), jpeg_subsample, jpeg_colorspace
 
     def __axis_to_image_boundaries(self, a, b, img_boundary, preserve, mcuBlock):
         img_b = img_boundary - (img_boundary % mcuBlock)
