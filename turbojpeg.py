@@ -335,7 +335,7 @@ class TurboJPEG(object):
         try:
             jpeg_buf = c_void_p()
             jpeg_size = c_ulong()
-            height, width, _ = img_array.shape
+            height, width = img_array.shape[:2]
             src_addr = self.__getaddr(img_array)
             status = self.__compress(
                 handle, src_addr, width, img_array.strides[0], height, pixel_format,
