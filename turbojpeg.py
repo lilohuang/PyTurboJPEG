@@ -38,6 +38,7 @@ DEFAULT_LIB_PATHS = {
     'Darwin': ['/usr/local/opt/jpeg-turbo/lib/libturbojpeg.dylib'],
     'Linux': [
         '/usr/lib/x86_64-linux-gnu/libturbojpeg.so.0',
+        '/usr/lib64/libturbojpeg.so.0',
         '/opt/libjpeg-turbo/lib64/libturbojpeg.so'
     ],
     'Windows': ['C:/libjpeg-turbo64/bin/turbojpeg.dll']
