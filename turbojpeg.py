@@ -41,6 +41,10 @@ DEFAULT_LIB_PATHS = {
         '/usr/lib64/libturbojpeg.so.0',
         '/opt/libjpeg-turbo/lib64/libturbojpeg.so'
     ],
+    'FreeBSD': [
+        '/usr/local/lib/libjpeg.so.8',
+        '/usr/local/lib/libjpeg.so'
+    ],
     'Windows': ['C:/libjpeg-turbo64/bin/turbojpeg.dll']
 }
 
