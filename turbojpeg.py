@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.5.1'
+__version__ = '1.6.0'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -38,7 +38,12 @@ DEFAULT_LIB_PATHS = {
     'Darwin': ['/usr/local/opt/jpeg-turbo/lib/libturbojpeg.dylib'],
     'Linux': [
         '/usr/lib/x86_64-linux-gnu/libturbojpeg.so.0',
+        '/usr/lib64/libturbojpeg.so.0',
         '/opt/libjpeg-turbo/lib64/libturbojpeg.so'
+    ],
+    'FreeBSD': [
+        '/usr/local/lib/libjpeg.so.8',
+        '/usr/local/lib/libjpeg.so'
     ],
     'Windows': ['C:/libjpeg-turbo64/bin/turbojpeg.dll']
 }
@@ -130,14 +135,11 @@ TJFLAG_STOPONWARNING = 8192
 TJFLAG_PROGRESSIVE = 16384
 TJFLAG_LIMITSCANS = 32768
 
-
 class CroppingRegion(Structure):
     _fields_ = [("x", c_int), ("y", c_int), ("w", c_int), ("h", c_int)]
 
-
 class ScalingFactor(Structure):
     _fields_ = ('num', c_int), ('denom', c_int)
-
 
 CUSTOMFILTER = CFUNCTYPE(
     c_int,
@@ -148,7 +150,6 @@ CUSTOMFILTER = CFUNCTYPE(
     c_int,
     c_void_p
 )
-
 
 class BackgroundStruct(Structure):
     """Struct to send data to fill_background callback function.
@@ -168,7 +169,6 @@ class BackgroundStruct(Structure):
         ("lum", c_int)
     ]
 
-
 class TransformStruct(Structure):
     _fields_ = [
         ("r", CroppingRegion),
@@ -178,12 +178,10 @@ class TransformStruct(Structure):
         ("customFilter", CUSTOMFILTER)
     ]
 
-
 # MCU for luminance is always 8
 MCU_WIDTH = 8
 MCU_HEIGHT = 8
 MCU_SIZE = 64
-
 
 def fill_background(coeffs_ptr, arrayRegion, planeRegion, componentID, transformID, transform_ptr):
     """Callback function for filling extended crop images with background
@@ -215,7 +213,6 @@ def fill_background(coeffs_ptr, arrayRegion, planeRegion, componentID, transform
 
     # Only modify luminance data, so we dont need to worry about subsampling
     if componentID == 0:
-
         coeff_array_size = arrayRegion.w * arrayRegion.h
         # Read the coefficients in the pointer as a np array (no copy)
         ArrayType = c_short*coeff_array_size
@@ -272,7 +269,6 @@ def fill_background(coeffs_ptr, arrayRegion, planeRegion, componentID, transform
                 coeffs[y][x][0] = background_data.lum
 
     return 1
-
 
 class TurboJPEG(object):
     """A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image."""
@@ -550,7 +546,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def crop_multiple(self, jpeg_buf, crop_parameters, background_luminance, gray = False):
+    def crop_multiple(self, jpeg_buf, crop_parameters, background_luminance, gray=False):
         """Lossless crop and/or extension operations on jpeg image.
         Crop origin(s) needs be divisable by the MCU block size and inside
         the input image, or OSError: Invalid crop request is raised.
@@ -573,9 +569,9 @@ class TurboJPEG(object):
         List[bytes]
             Cropped and/or extended jpeg images.
         """
-        handle: c_void_p = self.__init_transform()
+        handle = self.__init_transform()
         try:
-            jpeg_array: np.ndarray = np.frombuffer(jpeg_buf, dtype=np.uint8)
+            jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             image_width = c_int()
             image_height = c_int()
@@ -583,7 +579,7 @@ class TurboJPEG(object):
             jpeg_colorspace = c_int()
 
             # Decompress header to get input image size and subsample value
-            decompress_header_status: int = self.__decompress_header(
+            decompress_header_status = self.__decompress_header(
                 handle,
                 src_addr,
                 jpeg_array.size,
@@ -598,9 +594,8 @@ class TurboJPEG(object):
 
             # Define cropping regions from input parameters and image size
             crop_regions = self.__define_cropping_regions(crop_parameters)
-
             number_of_operations = len(crop_regions)
-
+            
             # Define crop transforms from cropping_regions
             crop_transforms = (TransformStruct * number_of_operations)()
             for i, crop_region in enumerate(crop_regions):
@@ -651,7 +646,7 @@ class TurboJPEG(object):
                 self.__report_error(handle)
 
             # Copy the transform results into python bytes
-            results: List[bytes] = []
+            results = []
             for i in range(number_of_operations):
                 dest_buf = create_string_buffer(dest_size[i])
                 memmove(dest_buf, dest_array[i], dest_size[i])
