@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.5.4'
+__version__ = '1.6.0'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -138,13 +138,137 @@ TJFLAG_LIMITSCANS = 32768
 class CroppingRegion(Structure):
     _fields_ = [("x", c_int), ("y", c_int), ("w", c_int), ("h", c_int)]
 
-class TransformStruct(Structure):
-    _fields_ = [("r", CroppingRegion), ("op", c_int), ("options", c_int), ("data", c_void_p),
-        ("customFilter", c_void_p)]
+class ScalingFactor(Structure):
+    _fields_ = ('num', c_int), ('denom', c_int)
 
 CUSTOMFILTER = CFUNCTYPE(
-    c_int, POINTER(c_short), CroppingRegion, CroppingRegion, c_int, c_int,
-    POINTER(TransformStruct))
+    c_int,
+    POINTER(c_short),
+    CroppingRegion,
+    CroppingRegion,
+    c_int,
+    c_int,
+    c_void_p
+)
+
+class BackgroundStruct(Structure):
+    """Struct to send data to fill_background callback function.
+
+    Parameters
+    ----------
+    w: c_int
+        Width of the input image.
+    h: c_int
+        Height of the input image.
+    lum: c_int
+        Luminance value to use as background when extending the image.
+    """
+    _fields_ = [
+        ("w", c_int),
+        ("h", c_int),
+        ("lum", c_int)
+    ]
+
+class TransformStruct(Structure):
+    _fields_ = [
+        ("r", CroppingRegion),
+        ("op", c_int),
+        ("options", c_int),
+        ("data", POINTER(BackgroundStruct)),
+        ("customFilter", CUSTOMFILTER)
+    ]
+
+# MCU for luminance is always 8
+MCU_WIDTH = 8
+MCU_HEIGHT = 8
+MCU_SIZE = 64
+
+def fill_background(coeffs_ptr, arrayRegion, planeRegion, componentID, transformID, transform_ptr):
+    """Callback function for filling extended crop images with background
+    color. The callback can be called multiple times for each component, each
+    call providing a region (defined by arrayRegion) of the image.
+
+    Parameters
+    ----------
+    coeffs_ptr: POINTER(c_short)
+        Pointer to the coefficient array for the callback.
+    arrayRegion: CroppingRegion
+        The width and height coefficient array and its offset relative to
+        the component plane.
+    planeRegion: CroppingRegion
+        The width and height of the component plane of the coefficient array.
+    componentID: c_int
+        The component number (i.e. 0, 1, or 2)
+    transformID: c_int
+        The index of the transformation in the array of transformation given to
+        the transform function.
+    transform_ptr: c_voipd_p
+        Pointer to the transform structure used for the transformation.
+
+    Returns
+    ----------
+    c_int
+        CFUNCTYPE function must return an int.
+    """
+
+    # Only modify luminance data, so we dont need to worry about subsampling
+    if componentID == 0:
+        coeff_array_size = arrayRegion.w * arrayRegion.h
+        # Read the coefficients in the pointer as a np array (no copy)
+        ArrayType = c_short*coeff_array_size
+        array_pointer = cast(coeffs_ptr, POINTER(ArrayType))
+        coeffs = np.frombuffer(array_pointer.contents, dtype=np.int16)
+        coeffs.shape = (
+            arrayRegion.h//MCU_WIDTH,
+            arrayRegion.w//MCU_HEIGHT,
+            MCU_SIZE
+        )
+
+        # Cast the content of the transform pointer into a transform structure
+        transform = cast(transform_ptr, POINTER(TransformStruct)).contents
+        # Cast the content of the callback data pointer in the transform
+        # structure to a background structure
+        background_data = cast(
+            transform.data, POINTER(BackgroundStruct)
+        ).contents
+
+        # The coeff array is typically just one MCU heigh, but it is up to the
+        # libjpeg implementation how to do it. The part of the coeff array that
+        # is 'left' of 'non-background' data should thus be handled separately
+        # from the part 'under'. (Most of the time, the coeff array will be
+        # either 'left' or 'under', but both could happen). Note that start
+        # and end rows defined below can be outside the arrayRegion, but that
+        # the range they then define is of 0 length.
+
+        # fill mcus left of image
+        left_start_row = min(arrayRegion.y, background_data.h) - arrayRegion.y
+        left_end_row = (
+            min(arrayRegion.y+arrayRegion.h, background_data.h)
+            - arrayRegion.y
+        )
+        for x in range(background_data.w//MCU_WIDTH, planeRegion.w//MCU_WIDTH):
+            for y in range(
+                left_start_row//MCU_HEIGHT,
+                left_end_row//MCU_HEIGHT
+            ):
+                coeffs[y][x][0] = background_data.lum
+
+        # fill mcus under image
+        bottom_start_row = (
+            max(arrayRegion.y, background_data.h) - arrayRegion.y
+        )
+        bottom_end_row = (
+            max(arrayRegion.y+arrayRegion.h, background_data.h)
+            - arrayRegion.y
+        )
+        for x in range(0, planeRegion.w//MCU_WIDTH):
+            for y in range(
+                bottom_start_row//MCU_HEIGHT,
+                bottom_end_row//MCU_HEIGHT
+            ):
+                coeffs[y][x][0] = background_data.lum
+
+    return 1
 
 class TurboJPEG(object):
     """A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image."""
@@ -222,8 +346,7 @@ class TurboJPEG(object):
         if self.__get_error_code is not None:
             self.__get_error_code.argtypes = [c_void_p]
             self.__get_error_code.restype = c_int
-        class ScalingFactor(Structure):
-            _fields_ = ('num', c_int), ('denom', c_int)
+
         get_scaling_factors = turbo_jpeg.tjGetScalingFactors
         get_scaling_factors.argtypes = [POINTER(c_int)]
         get_scaling_factors.restype = POINTER(ScalingFactor)
@@ -423,6 +546,121 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
+    def crop_multiple(self, jpeg_buf, crop_parameters, background_luminance, gray=False):
+        """Lossless crop and/or extension operations on jpeg image.
+        Crop origin(s) needs be divisable by the MCU block size and inside
+        the input image, or OSError: Invalid crop request is raised.
+
+        Parameters
+        ----------
+        jpeg_buf: bytes
+            Input jpeg image.
+        crop_parameters: List[Tuple[int, int, int, int]]
+            List of crop parameters defining start x and y origin and width
+            and height of each crop operation.
+        background_luminance: int
+            Luminance level to fill background when extending image. Default to
+            full, resulting in white background.
+        gray: bool
+            Produce greyscale output
+
+        Returns
+        ----------
+        List[bytes]
+            Cropped and/or extended jpeg images.
+        """
+        handle = self.__init_transform()
+        try:
+            jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
+            src_addr = self.__getaddr(jpeg_array)
+            image_width = c_int()
+            image_height = c_int()
+            jpeg_subsample = c_int()
+            jpeg_colorspace = c_int()
+
+            # Decompress header to get input image size and subsample value
+            decompress_header_status = self.__decompress_header(
+                handle,
+                src_addr,
+                jpeg_array.size,
+                byref(image_width),
+                byref(image_height),
+                byref(jpeg_subsample),
+                byref(jpeg_colorspace)
+            )
+
+            if decompress_header_status != 0:
+                self.__report_error(handle)
+
+            # Define cropping regions from input parameters and image size
+            crop_regions = self.__define_cropping_regions(crop_parameters)
+            number_of_operations = len(crop_regions)
+            
+            # Define crop transforms from cropping_regions
+            crop_transforms = (TransformStruct * number_of_operations)()
+            for i, crop_region in enumerate(crop_regions):
+                # The fill_background callback is slow, only use it if needed
+                if self.__need_fill_background(
+                    crop_region,
+                    (image_width.value, image_height.value),
+                    background_luminance
+                ):
+                    # Use callback to fill in background post-transform
+                    callback_data = BackgroundStruct(
+                        image_width,
+                        image_height,
+                        background_luminance
+                    )
+                    callback = CUSTOMFILTER(fill_background)
+                    crop_transforms[i] = TransformStruct(
+                        crop_region,
+                        TJXOP_NONE,
+                        TJXOPT_PERFECT | TJXOPT_CROP | (gray and TJXOPT_GRAY),
+                        pointer(callback_data),
+                        callback
+                    )
+                else:
+                    crop_transforms[i] = TransformStruct(
+                        crop_region,
+                        TJXOP_NONE,
+                        TJXOPT_PERFECT | TJXOPT_CROP | (gray and TJXOPT_GRAY)
+                    )
+
+            # Pointers to output image buffers and buffer size
+            dest_array = (c_void_p * number_of_operations)()
+            dest_size = (c_ulong * number_of_operations)()
+
+            # Do the transforms
+            transform_status = self.__transform(
+                handle,
+                src_addr,
+                jpeg_array.size,
+                number_of_operations,
+                dest_array,
+                dest_size,
+                crop_transforms,
+                TJFLAG_ACCURATEDCT
+            )
+
+            if transform_status != 0:
+                self.__report_error(handle)
+
+            # Copy the transform results into python bytes
+            results = []
+            for i in range(number_of_operations):
+                dest_buf = create_string_buffer(dest_size[i])
+                memmove(dest_buf, dest_array[i], dest_size[i])
+                results.append(dest_buf.raw)
+
+            # Free the output image buffers
+            for dest in dest_array:
+                self.__free(dest)
+
+            return results
+
+        finally:
+            self.__destroy(handle)
+
     def __get_header_and_dimensions(self, handle, jpeg_array_size, src_addr, scaling_factor):
         """returns scaled image dimensions and header data"""
         if scaling_factor is not None and \
@@ -461,6 +699,54 @@ class TurboJPEG(object):
         if (a + b) > img_b:
             b = img_b - a
         return a, b
+
+    @staticmethod
+    def __define_cropping_regions(crop_parameters):
+        """Return list of crop regions from crop parameters
+
+        Parameters
+        ----------
+        crop_parameters: List[Tuple[int, int, int, int]]
+            List of crop parameters defining start x and y origin and width
+            and height of each crop operation.
+
+        Returns
+        ----------
+        List[CroppingRegion]
+            List of crop operations, size is equal to the product of number of
+            crop operations to perform in x and y direction.
+        """
+        return [
+            CroppingRegion(x=crop[0], y=crop[1], w=crop[2], h=crop[3])
+            for crop in crop_parameters
+        ]
+
+    @staticmethod
+    def __need_fill_background(crop_region, image_size, background_luminance):
+        """Return true if crop operation require background fill operation.
+
+        Parameters
+        ----------
+        crop_region: CroppingRegion
+            The crop region to check.
+        image_size: [int, int]
+            Size of input image.
+        background_luminance: int
+            Requested background luminance.
+
+        Returns
+        ----------
+        bool
+            True if crop operation require background fill operation.
+        """
+        return (
+            (
+                (crop_region.x + crop_region.w > image_size[0])
+                or
+                (crop_region.y + crop_region.h > image_size[1])
+            )
+            and (background_luminance != 0)
+        )
 
     def __report_error(self, handle):
         """reports error while error occurred"""
