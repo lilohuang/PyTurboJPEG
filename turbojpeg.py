@@ -555,7 +555,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def crop_multiple(self, jpeg_buf, crop_parameters, background_luminance = 1.0, gray=False):
+    def crop_multiple(self, jpeg_buf, crop_parameters, background_luminance=1.0, gray=False):
         """Lossless crop and/or extension operations on jpeg image.
         Crop origin(s) needs be divisable by the MCU block size and inside
         the input image, or OSError: Invalid crop request is raised.
@@ -619,9 +619,10 @@ class TurboJPEG(object):
                         image_width,
                         image_height,
                         self.__map_luminance_to_dc_dct_coefficient(
-                            jpeg_buf,
+                            bytearray(jpeg_buf),
                             background_luminance
-                        )                    )
+                        )
+                    )
                     callback = CUSTOMFILTER(fill_background)
                     crop_transforms[i] = TransformStruct(
                         crop_region,
@@ -778,7 +779,7 @@ class TurboJPEG(object):
         """
         offset = 0
         while offset < len(jpeg_data):
-            dct_table_offset = jpeg_data[offset:].find(bytes([0xFF, 0xDB]))
+            dct_table_offset = jpeg_data[offset:].find(b'\xFF\xDB')
             if dct_table_offset == -1:
                 break
             dct_table_offset += offset
@@ -815,7 +816,8 @@ class TurboJPEG(object):
         dqt_offset = cls.__find_dqt(jpeg_data, dqt_index)
         if dqt_offset is None:
             raise ValueError(
-                f"Quantisation table {dqt_index} not found in header"
+                "Quantisation table {dqt_index} not found in header".format(
+                    dqt_index=dqt_index)
             )
         precision_offset = dqt_offset+4
         precision = split_byte_into_nibbles(jpeg_data[precision_offset])[0]
@@ -855,7 +857,7 @@ class TurboJPEG(object):
         """
         luminance = min(max(luminance, 0), 1)
         dc_dqt_coefficient = cls.__get_dc_dqt_element(jpeg_data, 0)
-        return(round((luminance * 2047 - 1024) / dc_dqt_coefficient))
+        return int(round((luminance * 2047 - 1024) / dc_dqt_coefficient))
 
     def __report_error(self, handle):
         """reports error while error occurred"""
