@@ -32,6 +32,7 @@ import numpy as np
 import math
 import warnings
 import os
+from struct import unpack, calcsize
 
 # default libTurboJPEG library path
 DEFAULT_LIB_PATHS = {
@@ -269,6 +270,14 @@ def fill_background(coeffs_ptr, arrayRegion, planeRegion, componentID, transform
                 coeffs[y][x][0] = background_data.lum
 
     return 1
+
+
+def split_byte_into_nibbles(value):
+    """Split byte int into 2 nibbles (4 bits)."""
+    first = value >> 4
+    second = value & 0x0F
+    return first, second
+
 
 class TurboJPEG(object):
     """A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image."""
@@ -546,7 +555,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def crop_multiple(self, jpeg_buf, crop_parameters, background_luminance, gray=False):
+    def crop_multiple(self, jpeg_buf, crop_parameters, background_luminance=1.0, gray=False):
         """Lossless crop and/or extension operations on jpeg image.
         Crop origin(s) needs be divisable by the MCU block size and inside
         the input image, or OSError: Invalid crop request is raised.
@@ -558,9 +567,9 @@ class TurboJPEG(object):
         crop_parameters: List[Tuple[int, int, int, int]]
             List of crop parameters defining start x and y origin and width
             and height of each crop operation.
-        background_luminance: int
-            Luminance level to fill background when extending image. Default to
-            full, resulting in white background.
+        background_luminance: float
+            Luminance level (0 -1 ) to fill background when extending image.
+            Default to 1, resulting in white background.
         gray: bool
             Produce greyscale output
 
@@ -595,7 +604,7 @@ class TurboJPEG(object):
             # Define cropping regions from input parameters and image size
             crop_regions = self.__define_cropping_regions(crop_parameters)
             number_of_operations = len(crop_regions)
-            
+
             # Define crop transforms from cropping_regions
             crop_transforms = (TransformStruct * number_of_operations)()
             for i, crop_region in enumerate(crop_regions):
@@ -609,7 +618,10 @@ class TurboJPEG(object):
                     callback_data = BackgroundStruct(
                         image_width,
                         image_height,
-                        background_luminance
+                        self.__map_luminance_to_dc_dct_coefficient(
+                            bytearray(jpeg_buf),
+                            background_luminance
+                        )
                     )
                     callback = CUSTOMFILTER(fill_background)
                     crop_transforms[i] = TransformStruct(
@@ -731,7 +743,7 @@ class TurboJPEG(object):
             The crop region to check.
         image_size: [int, int]
             Size of input image.
-        background_luminance: int
+        background_luminance: float
             Requested background luminance.
 
         Returns
@@ -745,8 +757,107 @@ class TurboJPEG(object):
                 or
                 (crop_region.y + crop_region.h > image_size[1])
             )
-            and (background_luminance != 0)
+            and (background_luminance != 0.5)
         )
+
+    @staticmethod
+    def __find_dqt(jpeg_data, dqt_index):
+        """Return byte offset to quantification table with index dqt_index in
+        jpeg_data.
+
+        Parameters
+        ----------
+        jpeg_data: bytes
+            Jpeg data.
+        dqt_index: int
+            Index of quantificatin table to find (0 - luminance).
+
+        Returns
+        ----------
+        Optional[int]
+            Byte offset to quantification table, or None if not found.
+        """
+        offset = 0
+        while offset < len(jpeg_data):
+            dct_table_offset = jpeg_data[offset:].find(b'\xFF\xDB')
+            if dct_table_offset == -1:
+                break
+            dct_table_offset += offset
+            dct_table_length = unpack(
+                '>H',
+                jpeg_data[dct_table_offset+2:dct_table_offset+4]
+            )[0]
+            dct_table_id_offset = dct_table_offset + 4
+            table_index, _ = split_byte_into_nibbles(
+                jpeg_data[dct_table_id_offset]
+            )
+            if table_index == dqt_index:
+                return dct_table_offset
+            offset += dct_table_offset+dct_table_length
+        return None
+
+    @classmethod
+    def __get_dc_dqt_element(cls, jpeg_data, dqt_index):
+        """Return dc quantification element from jpeg_data for quantification
+        table dqt_index.
+
+        Parameters
+        ----------
+        jpeg_data: bytes
+            Jpeg data containing quantification table(s).
+        dqt_index: int
+            Index of quantificatin table to get (0 - luminance).
+
+        Returns
+        ----------
+        int
+            Dc quantification element.
+        """
+        dqt_offset = cls.__find_dqt(jpeg_data, dqt_index)
+        if dqt_offset is None:
+            raise ValueError(
+                "Quantisation table {dqt_index} not found in header".format(
+                    dqt_index=dqt_index)
+            )
+        precision_offset = dqt_offset+4
+        precision = split_byte_into_nibbles(jpeg_data[precision_offset])[0]
+        if precision == 0:
+            unpack_type = '>b'
+        elif precision == 1:
+            unpack_type = '>h'
+        else:
+            raise ValueError('Not valid precision definition in dqt')
+        dc_offset = dqt_offset + 5
+        dc_length = calcsize(unpack_type)
+        dc_value = unpack(
+            unpack_type,
+            jpeg_data[dc_offset:dc_offset+dc_length]
+        )[0]
+        return dc_value
+
+    @classmethod
+    def __map_luminance_to_dc_dct_coefficient(cls, jpeg_data, luminance):
+        """Map a luminance level (0 - 1) to quantified dc dct coefficient.
+        Before quantification dct coefficient have a range -1024 - 1023. This
+        is reduced upon quantification by the quantification factor. This
+        function maps the input luminance level range to the quantified dc dct
+        coefficient range.
+
+        Parameters
+        ----------
+        jpeg_data: bytes
+            Jpeg data containing quantification table(s).
+        luminance: float
+            Luminance level (0 - black, 1 - white).
+
+        Returns
+        ----------
+        int
+            Quantified luminance dc dct coefficent.
+        """
+        luminance = min(max(luminance, 0), 1)
+        dc_dqt_coefficient = cls.__get_dc_dqt_element(jpeg_data, 0)
+        return int(round((luminance * 2047 - 1024) / dc_dqt_coefficient))
 
     def __report_error(self, handle):
         """reports error while error occurred"""
