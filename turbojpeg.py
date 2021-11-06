@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.6.2'
+__version__ = '1.6.3'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -502,7 +502,6 @@ class TurboJPEG(object):
                 handle, src_addr, jpeg_array.size, dest_addr, scaled_width, 4, scaled_height, flags)
             if status != 0:
                 self.__report_error(handle)
-                return
             self.__destroy(handle)
             handle = self.__init_compress()
             jpeg_buf = c_void_p()
