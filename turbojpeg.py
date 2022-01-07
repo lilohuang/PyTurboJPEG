@@ -36,7 +36,10 @@ from struct import unpack, calcsize
 
 # default libTurboJPEG library path
 DEFAULT_LIB_PATHS = {
-    'Darwin': ['/usr/local/opt/jpeg-turbo/lib/libturbojpeg.dylib'],
+    'Darwin': [
+        '/usr/local/opt/jpeg-turbo/lib/libturbojpeg.dylib',
+        '/opt/libjpeg-turbo/lib64/libturbojpeg.dylib'
+    ],
     'Linux': [
         '/usr/lib/x86_64-linux-gnu/libturbojpeg.so.0',
         '/usr/lib64/libturbojpeg.so.0',
