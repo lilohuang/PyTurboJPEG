@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.6.4'
+__version__ = '1.6.5'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -36,7 +36,10 @@ from struct import unpack, calcsize
 
 # default libTurboJPEG library path
 DEFAULT_LIB_PATHS = {
-    'Darwin': ['/usr/local/opt/jpeg-turbo/lib/libturbojpeg.dylib'],
+    'Darwin': [
+        '/usr/local/opt/jpeg-turbo/lib/libturbojpeg.dylib',
+        '/opt/libjpeg-turbo/lib64/libturbojpeg.dylib'
+    ],
     'Linux': [
         '/usr/lib/x86_64-linux-gnu/libturbojpeg.so.0',
         '/usr/lib64/libturbojpeg.so.0',
@@ -110,6 +113,10 @@ TJXOPT_GRAY = 8
 TJXOPT_NOOUTPUT = 16
 TJXOPT_PROGRESSIVE = 32
 TJXOPT_COPYNONE = 64
+
+# pixel size
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+tjPixelSize = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
 
 # MCU block width (in pixels) for a given level of chrominance subsampling.
 # MCU block sizes:
@@ -395,13 +402,12 @@ class TurboJPEG(object):
         """decodes JPEG memory buffer to numpy array."""
         handle = self.__init_decompress()
         try:
-            pixel_size = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             scaled_width, scaled_height, _, _ = \
                 self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
             img_array = np.empty(
-                [scaled_height, scaled_width, pixel_size[pixel_format]],
+                [scaled_height, scaled_width, tjPixelSize[pixel_format]],
                 dtype=np.uint8)
             dest_addr = self.__getaddr(img_array)
             status = self.__decompress(
@@ -477,6 +483,9 @@ class TurboJPEG(object):
             jpeg_buf = c_void_p()
             jpeg_size = c_ulong()
             height, width = img_array.shape[:2]
+            channel = tjPixelSize[pixel_format]
+            if channel > 1 and (len(img_array.shape) < 3 or img_array.shape[2] != channel):
+                raise ValueError('Invalid shape for image data')
             src_addr = self.__getaddr(img_array)
             status = self.__compress(
                 handle, src_addr, width, img_array.strides[0], height, pixel_format,
