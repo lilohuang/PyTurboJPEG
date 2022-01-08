@@ -143,6 +143,10 @@ TJFLAG_STOPONWARNING = 8192
 TJFLAG_PROGRESSIVE = 16384
 TJFLAG_LIMITSCANS = 32768
 
+# pixel size
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+tjPixelSize = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
+
 class CroppingRegion(Structure):
     _fields_ = [("x", c_int), ("y", c_int), ("w", c_int), ("h", c_int)]
 
@@ -398,13 +402,12 @@ class TurboJPEG(object):
         """decodes JPEG memory buffer to numpy array."""
         handle = self.__init_decompress()
         try:
-            pixel_size = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             scaled_width, scaled_height, _, _ = \
                 self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
             img_array = np.empty(
-                [scaled_height, scaled_width, pixel_size[pixel_format]],
+                [scaled_height, scaled_width, tjPixelSize[pixel_format]],
                 dtype=np.uint8)
             dest_addr = self.__getaddr(img_array)
             status = self.__decompress(
@@ -480,6 +483,9 @@ class TurboJPEG(object):
             jpeg_buf = c_void_p()
             jpeg_size = c_ulong()
             height, width = img_array.shape[:2]
+            channel = tjPixelSize[pixel_format]
+            if channel > 1 and (len(img_array.shape) < 3 or img_array.shape[2] != channel):
+                raise ValueError('Invalid shape for image data')
             src_addr = self.__getaddr(img_array)
             status = self.__compress(
                 handle, src_addr, width, img_array.strides[0], height, pixel_format,
