@@ -114,6 +114,10 @@ TJXOPT_NOOUTPUT = 16
 TJXOPT_PROGRESSIVE = 32
 TJXOPT_COPYNONE = 64
 
+# pixel size
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+tjPixelSize = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
+
 # MCU block width (in pixels) for a given level of chrominance subsampling.
 # MCU block sizes:
 #  - 8x8 for no subsampling or grayscale
@@ -142,10 +146,6 @@ TJFLAG_ACCURATEDCT = 4096
 TJFLAG_STOPONWARNING = 8192
 TJFLAG_PROGRESSIVE = 16384
 TJFLAG_LIMITSCANS = 32768
-
-# pixel size
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
-tjPixelSize = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
 
 class CroppingRegion(Structure):
     _fields_ = [("x", c_int), ("y", c_int), ("w", c_int), ("h", c_int)]
