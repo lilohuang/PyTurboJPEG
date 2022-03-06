@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.6.5'
+__version__ = '1.6.6'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -38,7 +38,8 @@ from struct import unpack, calcsize
 DEFAULT_LIB_PATHS = {
     'Darwin': [
         '/usr/local/opt/jpeg-turbo/lib/libturbojpeg.dylib',
-        '/opt/libjpeg-turbo/lib64/libturbojpeg.dylib'
+        '/opt/libjpeg-turbo/lib64/libturbojpeg.dylib',
+        '/opt/homebrew/opt/jpeg-turbo/lib/libturbojpeg.dylib'
     ],
     'Linux': [
         '/usr/lib/x86_64-linux-gnu/libturbojpeg.so.0',
