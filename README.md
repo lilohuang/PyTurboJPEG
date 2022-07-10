@@ -145,22 +145,22 @@ cv2.waitKey(0)
 
 ### macOS
 - brew install jpeg-turbo
-- pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
+- pip install -U git+https://github.com/lilohuang/PyTurboJPEG.git
 
 ### Windows 
 - Download [libjpeg-turbo official installer](https://sourceforge.net/projects/libjpeg-turbo/files) 
-- pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
+- pip install -U git+https://github.com/lilohuang/PyTurboJPEG.git
 
 ### Linux
 - RHEL/CentOS/Fedora
   - Download [libjpeg-turbo.repo](https://libjpeg-turbo.org/pmwiki/uploads/Downloads/libjpeg-turbo.repo) to /etc/yum.repos.d/
   - sudo yum install libjpeg-turbo-official
-  - pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
+  - pip install -U git+https://github.com/lilohuang/PyTurboJPEG.git
 
 - Ubuntu
   - sudo apt-get update
   - sudo apt-get install libturbojpeg
-  - pip install -U git+git://github.com/lilohuang/PyTurboJPEG.git
+  - pip install -U git+https://github.com/lilohuang/PyTurboJPEG.git
 
 ## Benchmark 
 
