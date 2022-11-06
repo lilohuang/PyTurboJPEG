@@ -28,6 +28,8 @@ __version__ = '1.6.7'
 from ctypes import *
 from ctypes.util import find_library
 import platform
+
+import numpy
 import numpy as np
 import math
 import warnings
@@ -500,6 +502,25 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
+    def encode_from_yuv(self, img_array, height, width, quality=85, jpeg_subsample=TJSAMP_420, flags=0):
+        """encodes numpy array to JPEG memory buffer."""
+        handle = self.__init_compress()
+        try:
+            jpeg_buf = c_void_p()
+            jpeg_size = c_ulong()
+            src_addr = self.__getaddr(img_array)
+            status = self.__compressFromYUV(
+                handle, src_addr, width, 4, height, jpeg_subsample,
+                byref(jpeg_buf), byref(jpeg_size), quality, flags)
+            if status != 0:
+                self.__report_error(handle)
+            dest_buf = create_string_buffer(jpeg_size.value)
+            memmove(dest_buf, jpeg_buf.value, jpeg_size.value)
+            self.__free(jpeg_buf)
+            return dest_buf.raw
+        finally:
+            self.__destroy(handle)
+
     def scale_with_quality(self, jpeg_buf, scaling_factor=None, quality=85, flags=0):
         """decompresstoYUV with scale factor, recompresstoYUV with quality factor"""
         handle = self.__init_decompress()
@@ -918,13 +939,23 @@ class TurboJPEG(object):
         return self.__scaling_factors
 
 if __name__ == '__main__':
-    jpeg = TurboJPEG()
-    in_file = open('input.jpg', 'rb')
-    img_array = jpeg.decode(in_file.read())
-    in_file.close()
+    jpeg = TurboJPEG('C:\\libjpeg-turbo-gcc64\\bin\\libturbojpeg.dll')
+    file_array =numpy.fromfile('E:\\test.bin', np.int8)
+    size = 360 * 320;
+    file_array = file_array[:size].reshape((360, 320))
+    print(file_array.shape)
     out_file = open('output.jpg', 'wb')
-    out_file.write(jpeg.encode(img_array))
+    out_file.write(jpeg.encode_from_yuv(file_array, 240, 320))
     out_file.close()
-    import cv2
-    cv2.imshow('image', img_array)
-    cv2.waitKey(0)
+
+
+
+#    in_file = open('input.jpg', 'rb')
+#    img_array = jpeg.decode(in_file.read())
+#    in_file.close()
+#    out_file = open('output.jpg', 'wb')
+#    out_file.write(jpeg.encode(img_array))
+#    out_file.close()
+#    import cv2
+#    cv2.imshow('image', img_array)
+#    cv2.waitKey(0)
