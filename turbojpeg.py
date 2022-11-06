@@ -28,8 +28,6 @@ __version__ = '1.6.7'
 from ctypes import *
 from ctypes.util import find_library
 import platform
-
-import numpy
 import numpy as np
 import math
 import warnings
@@ -939,23 +937,12 @@ class TurboJPEG(object):
         return self.__scaling_factors
 
 if __name__ == '__main__':
-    jpeg = TurboJPEG('C:\\libjpeg-turbo-gcc64\\bin\\libturbojpeg.dll')
-    file_array =numpy.fromfile('E:\\test.bin', np.int8)
-    size = 360 * 320;
-    file_array = file_array[:size].reshape((360, 320))
-    print(file_array.shape)
+    in_file = open('input.jpg', 'rb')
+    img_array = jpeg.decode(in_file.read())
+    in_file.close()
     out_file = open('output.jpg', 'wb')
-    out_file.write(jpeg.encode_from_yuv(file_array, 240, 320))
+    out_file.write(jpeg.encode(img_array))
     out_file.close()
-
-
-
-#    in_file = open('input.jpg', 'rb')
-#    img_array = jpeg.decode(in_file.read())
-#    in_file.close()
-#    out_file = open('output.jpg', 'wb')
-#    out_file.write(jpeg.encode(img_array))
-#    out_file.close()
-#    import cv2
-#    cv2.imshow('image', img_array)
-#    cv2.waitKey(0)
+    import cv2
+    cv2.imshow('image', img_array)
+    cv2.waitKey(0)
