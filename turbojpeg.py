@@ -937,6 +937,7 @@ class TurboJPEG(object):
         return self.__scaling_factors
 
 if __name__ == '__main__':
+    jpeg = TurboJPEG()
     in_file = open('input.jpg', 'rb')
     img_array = jpeg.decode(in_file.read())
     in_file.close()
