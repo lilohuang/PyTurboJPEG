@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.6.7'
+__version__ = '1.7.0'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -491,6 +491,25 @@ class TurboJPEG(object):
             status = self.__compress(
                 handle, src_addr, width, img_array.strides[0], height, pixel_format,
                 byref(jpeg_buf), byref(jpeg_size), jpeg_subsample, quality, flags)
+            if status != 0:
+                self.__report_error(handle)
+            dest_buf = create_string_buffer(jpeg_size.value)
+            memmove(dest_buf, jpeg_buf.value, jpeg_size.value)
+            self.__free(jpeg_buf)
+            return dest_buf.raw
+        finally:
+            self.__destroy(handle)
+
+    def encode_from_yuv(self, img_array, height, width, quality=85, jpeg_subsample=TJSAMP_420, flags=0):
+        """encodes numpy array to JPEG memory buffer."""
+        handle = self.__init_compress()
+        try:
+            jpeg_buf = c_void_p()
+            jpeg_size = c_ulong()
+            src_addr = self.__getaddr(img_array)
+            status = self.__compressFromYUV(
+                handle, src_addr, width, 4, height, jpeg_subsample,
+                byref(jpeg_buf), byref(jpeg_size), quality, flags)
             if status != 0:
                 self.__report_error(handle)
             dest_buf = create_string_buffer(jpeg_size.value)
