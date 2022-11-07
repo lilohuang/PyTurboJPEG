@@ -500,6 +500,25 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
+    def encode_from_yuv(self, img_array, height, width, quality=85, jpeg_subsample=TJSAMP_420, flags=0):
+        """encodes numpy array to JPEG memory buffer."""
+        handle = self.__init_compress()
+        try:
+            jpeg_buf = c_void_p()
+            jpeg_size = c_ulong()
+            src_addr = self.__getaddr(img_array)
+            status = self.__compressFromYUV(
+                handle, src_addr, width, 4, height, jpeg_subsample,
+                byref(jpeg_buf), byref(jpeg_size), quality, flags)
+            if status != 0:
+                self.__report_error(handle)
+            dest_buf = create_string_buffer(jpeg_size.value)
+            memmove(dest_buf, jpeg_buf.value, jpeg_size.value)
+            self.__free(jpeg_buf)
+            return dest_buf.raw
+        finally:
+            self.__destroy(handle)
+
     def scale_with_quality(self, jpeg_buf, scaling_factor=None, quality=85, flags=0):
         """decompresstoYUV with scale factor, recompresstoYUV with quality factor"""
         handle = self.__init_decompress()
