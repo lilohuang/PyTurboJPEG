@@ -587,7 +587,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def crop_multiple(self, jpeg_buf, crop_parameters, background_luminance=1.0, gray=False):
+    def crop_multiple(self, jpeg_buf, crop_parameters, background_luminance=1.0, gray=False, copynone=False):
         """Lossless crop and/or extension operations on jpeg image.
         Crop origin(s) needs be divisable by the MCU block size and inside
         the input image, or OSError: Invalid crop request is raised.
@@ -604,6 +604,8 @@ class TurboJPEG(object):
             Default to 1, resulting in white background.
         gray: bool
             Produce greyscale output
+        copynone: bool
+            True = do noy copy EXIF data (False by detault)
 
         Returns
         ----------
@@ -659,7 +661,7 @@ class TurboJPEG(object):
                     crop_transforms[i] = TransformStruct(
                         crop_region,
                         TJXOP_NONE,
-                        TJXOPT_PERFECT | TJXOPT_CROP | (gray and TJXOPT_GRAY),
+                        TJXOPT_PERFECT | TJXOPT_CROP | (gray and TJXOPT_GRAY) | (copynone and TJXOPT_COPYNONE),
                         pointer(callback_data),
                         callback
                     )
@@ -667,7 +669,7 @@ class TurboJPEG(object):
                     crop_transforms[i] = TransformStruct(
                         crop_region,
                         TJXOP_NONE,
-                        TJXOPT_PERFECT | TJXOPT_CROP | (gray and TJXOPT_GRAY)
+                        TJXOPT_PERFECT | TJXOPT_CROP | (gray and TJXOPT_GRAY) | (copynone and TJXOPT_COPYNONE)
                     )
 
             # Pointers to output image buffers and buffer size
