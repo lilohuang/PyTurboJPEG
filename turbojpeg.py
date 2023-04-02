@@ -605,7 +605,7 @@ class TurboJPEG(object):
         gray: bool
             Produce greyscale output
         copynone: bool
-            True = do noy copy EXIF data (False by detault)
+            True = do noy copy EXIF data (False by default)
 
         Returns
         ----------
