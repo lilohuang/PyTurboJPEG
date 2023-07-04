@@ -93,6 +93,7 @@ TJSAMP_420 = 2
 TJSAMP_GRAY = 3
 TJSAMP_440 = 4
 TJSAMP_411 = 5
+TJSAMP_441 = 6
 
 # transform operations
 # see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
