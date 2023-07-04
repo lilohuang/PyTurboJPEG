@@ -2,7 +2,7 @@ import io
 from setuptools import setup, find_packages
 setup(
     name='PyTurboJPEG',
-    version='1.7.1',
+    version='1.7.2',
     description='A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image.',
     author='Lilo Huang',
     author_email='kuso.cc@gmail.com',
