@@ -353,6 +353,12 @@ class TurboJPEG(object):
             c_void_p, POINTER(c_ubyte), c_ulong, c_int, POINTER(c_void_p),
             POINTER(c_ulong), POINTER(TransformStruct), c_int]
         self.__transform.restype = c_int
+        self.__transform3 = getattr(turbo_jpeg, 'tj3Transform', None)
+        if self.__transform3 is not None:
+            self.__transform3.argtypes = [
+                c_void_p, POINTER(c_ubyte), c_size_t, c_int, POINTER(c_void_p),
+                POINTER(c_size_t), POINTER(TransformStruct)]
+            self.__transform3.restype = c_int
         self.__free = turbo_jpeg.tjFree
         self.__free.argtypes = [c_void_p]
         self.__free.restype = None
@@ -552,7 +558,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def crop(self, jpeg_buf, x, y, w, h, preserve=False, gray=False):
+    def crop(self, jpeg_buf, x, y, w, h, preserve=False, gray=False, copynone=False):
         """losslessly crop a jpeg image with optional grayscale"""
         handle = self.__init_transform()
         try:
@@ -571,20 +577,11 @@ class TurboJPEG(object):
                 x, w, width.value, preserve, tjMCUWidth[jpeg_subsample.value])
             y, h = self.__axis_to_image_boundaries(
                 y, h, height.value, preserve, tjMCUHeight[jpeg_subsample.value])
-            dest_array = c_void_p()
-            dest_size = c_ulong()
             region = CroppingRegion(x, y, w, h)
             crop_transform = TransformStruct(region, TJXOP_NONE,
-                TJXOPT_CROP | (gray and TJXOPT_GRAY))
-            status = self.__transform(
-                handle, src_addr, jpeg_array.size, 1, byref(dest_array), byref(dest_size),
-                byref(crop_transform), 0)
-            dest_buf = create_string_buffer(dest_size.value)
-            memmove(dest_buf, dest_array.value, dest_size.value)
-            self.__free(dest_array)
-            if status != 0:
-                self.__report_error(handle)
-            return dest_buf.raw
+                TJXOPT_CROP | (gray and TJXOPT_GRAY) | (copynone and TJXOPT_COPYNONE))
+            return self.__do_transform(handle, src_addr, jpeg_array.size, 1, byref(crop_transform))[0]
+
         finally:
             self.__destroy(handle)
 
@@ -672,41 +669,79 @@ class TurboJPEG(object):
                         TJXOP_NONE,
                         TJXOPT_PERFECT | TJXOPT_CROP | (gray and TJXOPT_GRAY) | (copynone and TJXOPT_COPYNONE)
                     )
-
-            # Pointers to output image buffers and buffer size
-            dest_array = (c_void_p * number_of_operations)()
-            dest_size = (c_ulong * number_of_operations)()
-
-            # Do the transforms
-            transform_status = self.__transform(
-                handle,
-                src_addr,
-                jpeg_array.size,
-                number_of_operations,
-                dest_array,
-                dest_size,
-                crop_transforms,
-                TJFLAG_ACCURATEDCT
-            )
-
-            if transform_status != 0:
-                self.__report_error(handle)
-
-            # Copy the transform results into python bytes
-            results = []
-            for i in range(number_of_operations):
-                dest_buf = create_string_buffer(dest_size[i])
-                memmove(dest_buf, dest_array[i], dest_size[i])
-                results.append(dest_buf.raw)
-
-            # Free the output image buffers
-            for dest in dest_array:
-                self.__free(dest)
+            results = self.__do_transform(handle, src_addr, jpeg_array.size, number_of_operations, crop_transforms)
 
             return results
 
         finally:
             self.__destroy(handle)
+
+    def __do_transform(self, handle, src_buf, src_size, number_of_transforms, transforms):
+        """Do transform.
+
+        Parameters
+        ----------
+        handle: int
+            Initiated transform handle.
+        src_buf: LP_c_ubyte
+            Pointer to source buffer for transform
+        src_size: int
+            Size of source buffer.
+        number_of_transforms: int
+            Number of transforms to perform.
+        transforms: CArgObject
+            C-array of transforms to perform.
+
+        Returns
+        ----------
+        List[bytes]
+            Cropped and/or extended jpeg images.
+        """
+        # Pointers to output image buffers
+        dest_array = (c_void_p * number_of_transforms)()
+        try:
+            if self.__transform3 is not None:
+                dest_size = (c_size_t * number_of_transforms)()
+                transform_status = self.__transform3(
+                handle,
+                src_buf,
+                src_size,
+                number_of_transforms,
+                dest_array,
+                dest_size,
+                transforms,
+            )
+            else:
+                dest_size = (c_ulong * number_of_transforms)()
+                transform_status = self.__transform(
+                handle,
+                src_buf,
+                src_size,
+                number_of_transforms,
+                dest_array,
+                dest_size,
+                transforms,
+                0
+            )
+
+            if transform_status != 0:
+                self.__report_error(handle)
+             # Copy the transform results into python bytes
+            return [
+                self.__copy_from_buffer(dest_array[i], dest_size[i])
+                for i in range(number_of_transforms)
+            ]
+        finally:
+            # Free the output image buffers
+            for dest in dest_array:
+                self.__free(dest)
+
+    @staticmethod
+    def __copy_from_buffer(buffer, size):
+        """Copy bytes from buffer to python bytes."""
+        dest_buf = create_string_buffer(size)
+        memmove(dest_buf, buffer, size)
+        return dest_buf.raw
 
     def __get_header_and_dimensions(self, handle, jpeg_array_size, src_addr, scaling_factor):
         """returns scaled image dimensions and header data"""
