@@ -353,11 +353,12 @@ class TurboJPEG(object):
             c_void_p, POINTER(c_ubyte), c_ulong, c_int, POINTER(c_void_p),
             POINTER(c_ulong), POINTER(TransformStruct), c_int]
         self.__transform.restype = c_int
-        self.__transform3 = turbo_jpeg.tj3Transform
-        self.__transform3.argtypes = [
-            c_void_p, POINTER(c_ubyte), c_size_t, c_int, POINTER(c_void_p),
-            POINTER(c_size_t), POINTER(TransformStruct)]
-        self.__transform3.restype = c_int
+        self.__transform3 = getattr(turbo_jpeg, 'tj3Transform', None)
+        if self.__transform3 is not None:
+            self.__transform3.argtypes = [
+                c_void_p, POINTER(c_ubyte), c_size_t, c_int, POINTER(c_void_p),
+                POINTER(c_size_t), POINTER(TransformStruct)]
+            self.__transform3.restype = c_int
         self.__free = turbo_jpeg.tjFree
         self.__free.argtypes = [c_void_p]
         self.__free.restype = None
@@ -680,15 +681,15 @@ class TurboJPEG(object):
 
         Parameters
         ----------
-        handle:
+        handle: int
             Initiated transform handle.
-        src_buf: _Pointer[c_ubyte]
+        src_buf: LP_c_ubyte
             Pointer to source buffer for transform
         src_size: int
             Size of source buffer.
         number_of_transforms: int
             Number of transforms to perform.
-        transforms: Array[TransformStruct]
+        transforms: CArgObject
             C-array of transforms to perform.
 
         Returns
@@ -696,23 +697,12 @@ class TurboJPEG(object):
         List[bytes]
             Cropped and/or extended jpeg images.
         """
-        # Pointers to output image buffers and buffer size
+        # Pointers to output image buffers
         dest_array = (c_void_p * number_of_transforms)()
-        # c_ulong for turbojpeg < 3.
-        dest_size = (c_size_t * number_of_transforms)()
         try:
-
-            # transform_status = self.__transform(
-            #     handle,
-            #     src_buf,
-            #     src_size,
-            #     number_of_transforms,
-            #     dest_array,
-            #     dest_size,
-            #     transforms,
-            #     0
-            # )
-            transform_status = self.__transform3(
+            if self.__transform3 is not None:
+                dest_size = (c_size_t * number_of_transforms)()
+                transform_status = self.__transform3(
                 handle,
                 src_buf,
                 src_size,
@@ -721,6 +711,19 @@ class TurboJPEG(object):
                 dest_size,
                 transforms,
             )
+            else:
+                dest_size = (c_ulong * number_of_transforms)()
+                transform_status = self.__transform(
+                handle,
+                src_buf,
+                src_size,
+                number_of_transforms,
+                dest_array,
+                dest_size,
+                transforms,
+                0
+            )
+
             if transform_status != 0:
                 self.__report_error(handle)
              # Copy the transform results into python bytes
