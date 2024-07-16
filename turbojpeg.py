@@ -2,7 +2,7 @@
 #
 # PyTurboJPEG - A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image.
 #
-# Copyright (c) 2018-2023, Lilo Huang. All rights reserved.
+# Copyright (c) 2018-2024, Lilo Huang. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.7.3'
+__version__ = '1.7.4'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -43,6 +43,7 @@ DEFAULT_LIB_PATHS = {
     ],
     'Linux': [
         '/usr/lib/x86_64-linux-gnu/libturbojpeg.so.0',
+        '/usr/lib/libturbojpeg.so.0'
         '/usr/lib64/libturbojpeg.so.0',
         '/opt/libjpeg-turbo/lib64/libturbojpeg.so'
     ],
