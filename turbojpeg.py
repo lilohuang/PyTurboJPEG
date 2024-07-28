@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.7.4'
+__version__ = '1.7.5'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -491,6 +491,7 @@ class TurboJPEG(object):
         try:
             jpeg_buf = c_void_p()
             jpeg_size = c_ulong()
+            img_array = np.ascontiguousarray(img_array)
             height, width = img_array.shape[:2]
             channel = tjPixelSize[pixel_format]
             if channel > 1 and (len(img_array.shape) < 3 or img_array.shape[2] != channel):
@@ -514,6 +515,7 @@ class TurboJPEG(object):
         try:
             jpeg_buf = c_void_p()
             jpeg_size = c_ulong()
+            img_array = np.ascontiguousarray(img_array)
             src_addr = self.__getaddr(img_array)
             status = self.__compressFromYUV(
                 handle, src_addr, width, 4, height, jpeg_subsample,
