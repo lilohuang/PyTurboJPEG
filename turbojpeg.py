@@ -43,6 +43,7 @@ DEFAULT_LIB_PATHS = {
     ],
     'Linux': [
         '/usr/lib/x86_64-linux-gnu/libturbojpeg.so.0',
+        '/usr/lib/aarch64-linux-gnu/libturbojpeg.so.0',
         '/usr/lib/libturbojpeg.so.0',
         '/usr/lib64/libturbojpeg.so.0',
         '/opt/libjpeg-turbo/lib64/libturbojpeg.so'
