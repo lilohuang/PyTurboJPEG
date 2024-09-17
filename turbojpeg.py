@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.7.6'
+__version__ = '1.7.7'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -43,6 +43,7 @@ DEFAULT_LIB_PATHS = {
     ],
     'Linux': [
         '/usr/lib/x86_64-linux-gnu/libturbojpeg.so.0',
+        '/usr/lib/aarch64-linux-gnu/libturbojpeg.so.0',
         '/usr/lib/libturbojpeg.so.0',
         '/usr/lib64/libturbojpeg.so.0',
         '/opt/libjpeg-turbo/lib64/libturbojpeg.so'
