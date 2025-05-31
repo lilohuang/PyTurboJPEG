@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.7.8'
+__version__ = '1.8.0'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -774,16 +774,22 @@ class TurboJPEG(object):
         return scaled_width, scaled_height, jpeg_subsample, jpeg_colorspace
 
     def __axis_to_image_boundaries(self, a, b, img_boundary, preserve, mcuBlock):
-        img_b = img_boundary - (img_boundary % mcuBlock)
-        delta_a = a % mcuBlock
-        if a > img_b:
-            a = img_b
+        if preserve:
+            original_a = a
+            a = int(math.ceil(float(original_a) / mcuBlock) * mcuBlock)
+            b -= (a - original_a)
+            if (a + b) > img_boundary:
+                b = img_boundary - a
         else:
-            a = a - delta_a
-        if not preserve:
+            img_b = img_boundary - (img_boundary % mcuBlock)
+            delta_a = a % mcuBlock
+            if a > img_b:
+                a = img_b
+            else:
+                a = a - delta_a
             b = b + delta_a
-        if (a + b) > img_b:
-            b = img_b - a
+            if (a + b) > img_b:
+                b = img_b - a
         return a, b
 
     @staticmethod
