@@ -539,7 +539,7 @@ class TurboJPEG(object):
             scaled_width, scaled_height, jpeg_subsample, _ = self.__get_header_and_dimensions(
                 handle, jpeg_array.size, src_addr, scaling_factor)
             buffer_YUV_size = self.__buffer_size_YUV2(
-                scaled_height, 4, scaled_width, jpeg_subsample)
+                scaled_width, 4, scaled_height, jpeg_subsample)
             img_array = np.empty([buffer_YUV_size])
             dest_addr = self.__getaddr(img_array)
             status = self.__decompressToYUV2(
