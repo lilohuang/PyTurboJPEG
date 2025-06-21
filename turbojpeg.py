@@ -408,7 +408,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def decode(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0):
+    def decode(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0, dst=None):
         """decodes JPEG memory buffer to numpy array."""
         handle = self.__init_decompress()
         try:
@@ -416,9 +416,14 @@ class TurboJPEG(object):
             src_addr = self.__getaddr(jpeg_array)
             scaled_width, scaled_height, _, _ = \
                 self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
-            img_array = np.empty(
-                [scaled_height, scaled_width, tjPixelSize[pixel_format]],
-                dtype=np.uint8)
+            if ((type(dst) == np.ndarray) and
+                (dst.shape == (scaled_height, scaled_width, tjPixelSize[pixel_format])) and
+                (dst.dtype == np.uint8)):
+                img_array = dst
+            else:
+                img_array = np.empty(
+                    [scaled_height, scaled_width, tjPixelSize[pixel_format]],
+                    dtype=np.uint8)
             dest_addr = self.__getaddr(img_array)
             status = self.__decompress(
                 handle, src_addr, jpeg_array.size, dest_addr, scaled_width,
@@ -486,13 +491,22 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0):
+    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None):
         """encodes numpy array to JPEG memory buffer."""
         handle = self.__init_compress()
         try:
-            jpeg_buf = c_void_p()
-            jpeg_size = c_ulong()
             img_array = np.ascontiguousarray(img_array)
+            if dst is not None and not self.__is_buffer(dst):
+                raise TypeError('\'dst\' argument must support buffer protocol')
+            if (dst is not None and
+                (len(dst) >= self.buffer_size(img_array, jpeg_subsample))):
+                dst_array = np.frombuffer(dst, dtype=np.uint8)
+                jpeg_buf = dst_array.ctypes.data_as(c_void_p)
+                jpeg_size = c_ulong(len(dst))
+            else:
+                dst_array = None
+                jpeg_buf = c_void_p()
+                jpeg_size = c_ulong()
             height, width = img_array.shape[:2]
             channel = tjPixelSize[pixel_format]
             if channel > 1 and (len(img_array.shape) < 3 or img_array.shape[2] != channel):
@@ -503,10 +517,12 @@ class TurboJPEG(object):
                 byref(jpeg_buf), byref(jpeg_size), jpeg_subsample, quality, flags)
             if status != 0:
                 self.__report_error(handle)
-            dest_buf = create_string_buffer(jpeg_size.value)
-            memmove(dest_buf, jpeg_buf.value, jpeg_size.value)
-            self.__free(jpeg_buf)
-            return dest_buf.raw
+            if dst_array is None or jpeg_buf.value != dst_array.ctypes.data:
+                result = self.__copy_from_buffer(jpeg_buf.value, jpeg_size.value)
+                self.__free(jpeg_buf)
+            else:
+                result = dst
+            return result if dst is None else result, jpeg_size.value
         finally:
             self.__destroy(handle)
 
@@ -539,7 +555,7 @@ class TurboJPEG(object):
             scaled_width, scaled_height, jpeg_subsample, _ = self.__get_header_and_dimensions(
                 handle, jpeg_array.size, src_addr, scaling_factor)
             buffer_YUV_size = self.__buffer_size_YUV2(
-                scaled_height, 4, scaled_width, jpeg_subsample)
+                scaled_width, 4, scaled_height, jpeg_subsample)
             img_array = np.empty([buffer_YUV_size])
             dest_addr = self.__getaddr(img_array)
             status = self.__decompressToYUV2(
@@ -679,6 +695,12 @@ class TurboJPEG(object):
 
         finally:
             self.__destroy(handle)
+
+    def buffer_size(self, img_array, jpeg_subsample=TJSAMP_422):
+        """Get maximum number of bytes of compressed jpeg data"""
+        img_array = np.ascontiguousarray(img_array)
+        height, width = img_array.shape[:2]
+        return self.__buffer_size(width, height, jpeg_subsample)
 
     def __do_transform(self, handle, src_buf, src_size, number_of_transforms, transforms):
         """Do transform.
@@ -979,6 +1001,14 @@ class TurboJPEG(object):
     def __getaddr(self, nda):
         """returns the memory address for a given ndarray"""
         return cast(nda.__array_interface__['data'][0], POINTER(c_ubyte))
+
+    def __is_buffer(self, x):
+        result = True
+        try:
+            memoryview(x)
+        except Exception:
+            result = False
+        return result
 
     @property
     def scaling_factors(self):
