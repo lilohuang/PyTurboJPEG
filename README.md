@@ -96,6 +96,33 @@ in_file.close()
 out_file = open('lossless_cropped_output.jpg', 'wb')
 out_file.write(jpeg.crop(open('input.jpg', 'rb').read(), 8, 8, 320, 240))
 out_file.close()
+
+# in-place decoding input.jpg to BGR array
+# here I use a 640x480 example (in practise, read the dimensions)
+in_file = open('input.jpg', 'rb')
+img_array = np.empty((640, 480, 3), dtype=np.uint8)
+result = jpeg.decode(in_file.read(), dst=img_array)
+in_file.close()
+
+# return value is the img_array argument value
+id(result) == id(img_array)
+# True
+
+# Optional: display the in-place array
+# cv2.imshow('img_array', img_array)
+# cv2.waitKey(0)
+
+# in-place encoding with default settings.
+buffer_size = jpeg.buffer_size(img_array)
+dest_buf = bytearray(buffer_size)
+result, n_byte = jpeg.encode(img_array, dst=dest_buf)
+
+# return value is the dest_buf argument value
+id(result) == id(dest_buf)
+
+out_file = open('output.jpg', 'wb')
+out_file.write(dest_buf[:n_byte])
+out_file.close()
 ```
 
 ```python
