@@ -62,12 +62,12 @@ DEFAULT_LIB_PATHS = {
 }
 
 # error codes
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJERR_WARNING = 0
 TJERR_FATAL = 1
 
 # color spaces
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJCS_RGB = 0
 TJCS_YCbCr = 1
 TJCS_GRAY = 2
@@ -75,7 +75,7 @@ TJCS_CMYK = 3
 TJCS_YCCK = 4
 
 # pixel formats
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJPF_RGB = 0
 TJPF_BGR = 1
 TJPF_RGBX = 2
@@ -90,7 +90,7 @@ TJPF_ARGB = 10
 TJPF_CMYK = 11
 
 # chrominance subsampling options
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJSAMP_444 = 0
 TJSAMP_422 = 1
 TJSAMP_420 = 2
@@ -100,7 +100,7 @@ TJSAMP_411 = 5
 TJSAMP_441 = 6
 
 # transform operations
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJXOP_NONE = 0
 TJXOP_HFLIP = 1
 TJXOP_VFLIP = 2
@@ -111,7 +111,7 @@ TJXOP_ROT180 = 6
 TJXOP_ROT270 = 7
 
 # transform options
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJXOPT_PERFECT = 1
 TJXOPT_TRIM = 2
 TJXOPT_CROP = 4
@@ -121,7 +121,7 @@ TJXOPT_PROGRESSIVE = 32
 TJXOPT_COPYNONE = 64
 
 # pixel size
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 tjPixelSize = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
 
 # MCU block width (in pixels) for a given level of chrominance subsampling.
@@ -143,7 +143,7 @@ tjMCUWidth = [8, 16, 16, 8, 8, 32]
 tjMCUHeight = [8, 8, 16, 8, 16, 8]
 
 # miscellaneous flags
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 # note: TJFLAG_NOREALLOC cannot be supported due to reallocation is needed by PyTurboJPEG.
 TJFLAG_BOTTOMUP = 2
 TJFLAG_FASTUPSAMPLE = 256
@@ -154,13 +154,13 @@ TJFLAG_PROGRESSIVE = 16384
 TJFLAG_LIMITSCANS = 32768
 
 # tj3Init types
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJINIT_COMPRESS = 0
 TJINIT_DECOMPRESS = 1
 TJINIT_TRANSFORM = 2
 
 # tj3Set/tj3Get parameters
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJPARAM_STOPONWARNING = 0
 TJPARAM_BOTTOMUP = 1
 TJPARAM_NOREALLOC = 2
