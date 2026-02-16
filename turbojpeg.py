@@ -356,6 +356,11 @@ class TurboJPEG(object):
         self.__get.argtypes = [c_void_p, c_int]
         self.__get.restype = c_int
         
+        # tj3SetScalingFactor - set scaling factor for decompression
+        self.__set_scaling_factor = turbo_jpeg.tj3SetScalingFactor
+        self.__set_scaling_factor.argtypes = [c_void_p, ScalingFactor]
+        self.__set_scaling_factor.restype = c_int
+        
         # tj3JPEGBufSize - calculate buffer size for JPEG compression
         self.__buffer_size = turbo_jpeg.tj3JPEGBufSize
         self.__buffer_size.argtypes = [c_int, c_int, c_int]
@@ -851,25 +856,34 @@ class TurboJPEG(object):
             scaling_factor not in self.__scaling_factors:
             raise ValueError('supported scaling factors are ' +
                 str(self.__scaling_factors))
-        # Decompress header first
+        
+        # Decompress header first to get dimensions
         status = self.__decompress_header(handle, src_addr, jpeg_array_size)
         if status != 0:
             self.__report_error(handle)
-        # Get header information using tj3Get
+        
+        # Get unscaled header information using tj3Get
         width = self.__get(handle, TJPARAM_JPEGWIDTH)
         height = self.__get(handle, TJPARAM_JPEGHEIGHT)
         jpeg_subsample = self.__get(handle, TJPARAM_SUBSAMP)
         jpeg_colorspace = self.__get(handle, TJPARAM_COLORSPACE)
         
+        # Set scaling factor if provided - must be done AFTER reading header
         scaled_width = width
         scaled_height = height
         if scaling_factor is not None:
+            sf = ScalingFactor()
+            sf.num = scaling_factor[0]
+            sf.denom = scaling_factor[1]
+            status = self.__set_scaling_factor(handle, sf)
+            if status != 0:
+                self.__report_error(handle)
+            # Calculate scaled dimensions manually
             def get_scaled_value(dim, num, denom):
                 return (dim * num + denom - 1) // denom
-            scaled_width = get_scaled_value(
-                scaled_width, scaling_factor[0], scaling_factor[1])
-            scaled_height = get_scaled_value(
-                scaled_height, scaling_factor[0], scaling_factor[1])
+            scaled_width = get_scaled_value(width, scaling_factor[0], scaling_factor[1])
+            scaled_height = get_scaled_value(height, scaling_factor[0], scaling_factor[1])
+        
         return scaled_width, scaled_height, jpeg_subsample, jpeg_colorspace
 
     def __axis_to_image_boundaries(self, a, b, img_boundary, preserve, mcuBlock):
