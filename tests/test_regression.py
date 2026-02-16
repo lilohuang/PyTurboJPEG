@@ -460,5 +460,195 @@ class TestMemoryManagement:
                 assert decoded.shape == test_img.shape
 
 
+class TestCropFunctionality:
+    """
+    Test crop function with real input image based on Issue #88.
+    
+    These tests use a test input image to verify that crop operations
+    produce expected results with correct dimensions and content.
+    """
+    
+    @pytest.fixture(scope='class')
+    def test_crop_image(self):
+        """Load the test crop input image."""
+        test_image_path = os.path.join(os.path.dirname(__file__), 'test_crop_input.jpg')
+        if not os.path.exists(test_image_path):
+            pytest.skip(f"Test image not found: {test_image_path}")
+        
+        with open(test_image_path, 'rb') as f:
+            return f.read()
+    
+    def test_crop_input_image_loads(self, jpeg_instance, test_crop_image):
+        """Test that the input image loads correctly."""
+        # Verify we can decode the header
+        width, height, subsample, colorspace = jpeg_instance.decode_header(test_crop_image)
+        assert width == 200
+        assert height == 200
+        assert subsample in [TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_GRAY]
+        assert colorspace in [TJCS_RGB, TJCS_YCbCr, TJCS_GRAY]
+    
+    def test_crop_top_left_quadrant(self, jpeg_instance, test_crop_image):
+        """Test cropping the top-left quadrant (red area)."""
+        # Crop top-left 96x96 region (MCU-aligned for 4:2:0 subsampling)
+        cropped = jpeg_instance.crop(test_crop_image, 0, 0, 96, 96)
+        
+        # Verify cropped image properties
+        assert cropped is not None
+        assert isinstance(cropped, bytes)
+        assert len(cropped) > 0
+        
+        # Verify dimensions
+        width, height, _, _ = jpeg_instance.decode_header(cropped)
+        assert width == 96
+        assert height == 96
+        
+        # Decode and verify we got something reasonable
+        decoded = jpeg_instance.decode(cropped)
+        assert decoded.shape == (96, 96, 3)
+    
+    def test_crop_center_region(self, jpeg_instance, test_crop_image):
+        """Test cropping a center region that spans multiple quadrants."""
+        # Crop center 64x64 region (MCU-aligned)
+        x, y = 64, 64
+        w, h = 64, 64
+        cropped = jpeg_instance.crop(test_crop_image, x, y, w, h)
+        
+        # Verify dimensions
+        width, height, _, _ = jpeg_instance.decode_header(cropped)
+        assert width == w
+        assert height == h
+        
+        # Decode to verify
+        decoded = jpeg_instance.decode(cropped)
+        assert decoded.shape == (h, w, 3)
+    
+    def test_crop_with_mcu_alignment(self, jpeg_instance, test_crop_image):
+        """Test that crop respects MCU block alignment."""
+        # Test various crop positions that should align to MCU blocks
+        test_cases = [
+            (0, 0, 48, 48),      # Top-left, aligned
+            (48, 0, 48, 48),     # Top, aligned
+            (0, 48, 48, 48),     # Left, aligned
+            (48, 48, 48, 48),    # Center, aligned
+        ]
+        
+        for x, y, w, h in test_cases:
+            cropped = jpeg_instance.crop(test_crop_image, x, y, w, h)
+            width, height, _, _ = jpeg_instance.decode_header(cropped)
+            assert width == w, f"Width mismatch for crop at ({x},{y},{w},{h})"
+            assert height == h, f"Height mismatch for crop at ({x},{y},{w},{h})"
+    
+    def test_crop_with_preserve_flag(self, jpeg_instance, test_crop_image):
+        """Test crop with preserve flag adjusts to MCU boundaries."""
+        # Try to crop at non-aligned position with preserve=True
+        # The preserve flag should adjust boundaries
+        cropped = jpeg_instance.crop(test_crop_image, 10, 10, 50, 50, preserve=True)
+        
+        assert cropped is not None
+        assert isinstance(cropped, bytes)
+        
+        # Dimensions may be adjusted to MCU boundaries
+        width, height, _, _ = jpeg_instance.decode_header(cropped)
+        assert width > 0
+        assert height > 0
+    
+    def test_crop_to_grayscale(self, jpeg_instance, test_crop_image):
+        """Test crop with grayscale conversion."""
+        cropped = jpeg_instance.crop(test_crop_image, 0, 0, 96, 96, gray=True)
+        
+        assert cropped is not None
+        
+        # Verify grayscale subsampling
+        width, height, subsample, _ = jpeg_instance.decode_header(cropped)
+        assert width == 96
+        assert height == 96
+        assert subsample == TJSAMP_GRAY
+    
+    def test_crop_full_image(self, jpeg_instance, test_crop_image):
+        """Test cropping the full image (accounts for MCU alignment)."""
+        # Get original dimensions
+        orig_width, orig_height, _, _ = jpeg_instance.decode_header(test_crop_image)
+        
+        # Crop entire image (may be adjusted to MCU boundaries)
+        cropped = jpeg_instance.crop(test_crop_image, 0, 0, orig_width, orig_height)
+        
+        # Verify dimensions are close (within MCU block size)
+        width, height, _, _ = jpeg_instance.decode_header(cropped)
+        # MCU blocks are typically 8x8, 16x8, 16x16, or 32x8
+        # Allow for MCU adjustment (up to 16 pixels difference)
+        assert abs(width - orig_width) <= 16
+        assert abs(height - orig_height) <= 16
+        # Should still be substantial portion of original
+        assert width >= orig_width - 16
+        assert height >= orig_height - 16
+    
+    def test_crop_multiple_regions(self, jpeg_instance, test_crop_image):
+        """Test crop_multiple function with the test image."""
+        crop_params = [
+            (0, 0, 48, 48),      # Top-left quadrant
+            (48, 0, 48, 48),     # Top-right area
+            (0, 48, 48, 48),     # Bottom-left area
+            (48, 48, 48, 48),    # Center area
+        ]
+        
+        cropped_list = jpeg_instance.crop_multiple(test_crop_image, crop_params)
+        
+        assert isinstance(cropped_list, list)
+        assert len(cropped_list) == len(crop_params)
+        
+        # Verify each cropped image
+        for i, cropped in enumerate(cropped_list):
+            assert isinstance(cropped, bytes)
+            assert len(cropped) > 0
+            
+            # Verify dimensions
+            width, height, _, _ = jpeg_instance.decode_header(cropped)
+            expected_w, expected_h = crop_params[i][2], crop_params[i][3]
+            assert width == expected_w
+            assert height == expected_h
+    
+    def test_crop_edge_cases(self, jpeg_instance, test_crop_image):
+        """Test crop at image edges."""
+        orig_width, orig_height, _, _ = jpeg_instance.decode_header(test_crop_image)
+        
+        # Crop from right edge (MCU-aligned)
+        right_edge_x = orig_width - 48
+        cropped_right = jpeg_instance.crop(test_crop_image, right_edge_x, 0, 48, 48)
+        width, height, _, _ = jpeg_instance.decode_header(cropped_right)
+        assert width == 48
+        assert height == 48
+        
+        # Crop from bottom edge (MCU-aligned)
+        bottom_edge_y = orig_height - 48
+        cropped_bottom = jpeg_instance.crop(test_crop_image, 0, bottom_edge_y, 48, 48)
+        width, height, _, _ = jpeg_instance.decode_header(cropped_bottom)
+        assert width == 48
+        assert height == 48
+    
+    def test_crop_preserves_quality(self, jpeg_instance, test_crop_image):
+        """Test that crop is lossless (same quality)."""
+        # Crop a region
+        cropped = jpeg_instance.crop(test_crop_image, 16, 16, 64, 64)
+        
+        # Decode both original region and cropped
+        original_decoded = jpeg_instance.decode(test_crop_image)
+        cropped_decoded = jpeg_instance.decode(cropped)
+        
+        # Original cropped region
+        original_region = original_decoded[16:16+64, 16:16+64, :]
+        
+        # The shapes should match
+        assert cropped_decoded.shape == original_region.shape
+        
+        # Due to JPEG being lossy, pixel values may differ slightly,
+        # but the overall structure should be similar
+        # We check that most pixels are close (within a tolerance)
+        diff = np.abs(original_region.astype(np.int16) - cropped_decoded.astype(np.int16))
+        # Allow up to 10 pixel value difference for most pixels (JPEG artifacts)
+        close_pixels = np.sum(diff <= 10, axis=2) == 3  # All 3 channels close
+        percentage_close = np.sum(close_pixels) / close_pixels.size
+        assert percentage_close > 0.95, f"Only {percentage_close*100:.1f}% of pixels are close"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

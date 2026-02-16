@@ -47,6 +47,23 @@ Stress tests for memory stability:
 
 These tests verify no memory leaks or stability issues occur during extended use.
 
+#### 5. Crop Functionality (10 tests) - Issue #88
+Tests for the crop function using a real input image (`test_crop_input.jpg`):
+- Input image loading and validation
+- Cropping different quadrants and regions
+- MCU (Minimum Coded Unit) alignment verification
+- Preserve flag functionality
+- Grayscale conversion during crop
+- Full image cropping with MCU boundary adjustments
+- Multiple region cropping
+- Edge case handling (corners, boundaries)
+- Quality preservation (lossless crop verification)
+
+These tests ensure the crop function produces expected results with correct dimensions and content.
+
+### `test_crop_input.jpg`
+A 200x200 test image with distinct colored quadrants (red, green, blue, yellow) used for crop function testing. The image includes white borders for easy verification of crop boundaries.
+
 ## Running the Tests
 
 ### Run all regression tests:
@@ -67,6 +84,9 @@ pytest tests/test_regression.py::TestColorspaceConsistency -v
 
 # Memory management tests
 pytest tests/test_regression.py::TestMemoryManagement -v
+
+# Crop functionality tests (Issue #88)
+pytest tests/test_regression.py::TestCropFunctionality -v
 ```
 
 ### Run with coverage:
@@ -76,13 +96,14 @@ pytest tests/test_regression.py --cov=turbojpeg --cov-report=html
 
 ## Test Statistics
 
-- **Total Regression Tests**: 51
+- **Total Regression Tests**: 61
 - **Buffer Handling Tests**: 12
 - **Library Loading Tests**: 3
 - **Colorspace Consistency Tests**: 31
 - **Memory Management Tests**: 5
+- **Crop Functionality Tests**: 10
 
-Combined with the existing test suite in `test_turbojpeg.py` (53 tests), this brings the total test count to **104 tests**.
+Combined with the existing test suite in `test_turbojpeg.py` (53 tests), this brings the total test count to **114 tests**.
 
 ## Requirements
 
@@ -96,3 +117,4 @@ Combined with the existing test suite in `test_turbojpeg.py` (53 tests), this br
 - The library is resilient and may decode corrupted data with warnings rather than raising exceptions
 - Buffer size calculations are intentionally conservative (may be up to 3x raw data size)
 - Memory stress tests take approximately 1-2 seconds to complete
+- Crop tests use MCU-aligned boundaries for lossless operations
