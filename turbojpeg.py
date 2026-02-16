@@ -472,6 +472,9 @@ class TurboJPEG(object):
             height = self.__get(handle, TJPARAM_JPEGHEIGHT)
             jpeg_subsample = self.__get(handle, TJPARAM_SUBSAMP)
             jpeg_colorspace = self.__get(handle, TJPARAM_COLORSPACE)
+            # Check for errors (tj3Get returns -1 on error)
+            if width < 0 or height < 0 or jpeg_subsample < 0 or jpeg_colorspace < 0:
+                self.__report_error(handle)
             return (width, height, jpeg_subsample, jpeg_colorspace)
         finally:
             self.__destroy(handle)
@@ -867,6 +870,10 @@ class TurboJPEG(object):
         height = self.__get(handle, TJPARAM_JPEGHEIGHT)
         jpeg_subsample = self.__get(handle, TJPARAM_SUBSAMP)
         jpeg_colorspace = self.__get(handle, TJPARAM_COLORSPACE)
+        
+        # Check for errors (tj3Get returns -1 on error)
+        if width < 0 or height < 0 or jpeg_subsample < 0 or jpeg_colorspace < 0:
+            self.__report_error(handle)
         
         # Set scaling factor if provided - must be done AFTER reading header
         scaled_width = width
