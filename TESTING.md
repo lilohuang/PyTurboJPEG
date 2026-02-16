@@ -51,36 +51,38 @@ pip install numpy pytest pytest-memray
 
 ### Run All Tests
 ```bash
-pytest test_turbojpeg.py -v
+pytest tests/test_turbojpeg.py -v
+# Or run all tests in the tests directory
+pytest tests/ -v
 ```
 
 ### Run Specific Test Classes
 ```bash
 # Run only decode tests
-pytest test_turbojpeg.py::TestDecode -v
+pytest tests/test_turbojpeg.py::TestDecode -v
 
 # Run only encode tests
-pytest test_turbojpeg.py::TestEncode -v
+pytest tests/test_turbojpeg.py::TestEncode -v
 
 # Run only integration tests
-pytest test_turbojpeg.py::TestIntegration -v
+pytest tests/test_turbojpeg.py::TestIntegration -v
 
 # Run regression tests
-pytest test_turbojpeg.py::TestBufferHandlingRobustness -v
-pytest test_turbojpeg.py::TestColorspaceConsistency -v
-pytest test_turbojpeg.py::TestMemoryManagement -v
-pytest test_turbojpeg.py::TestCropFunctionality -v
+pytest tests/test_turbojpeg.py::TestBufferHandlingRobustness -v
+pytest tests/test_turbojpeg.py::TestColorspaceConsistency -v
+pytest tests/test_turbojpeg.py::TestMemoryManagement -v
+pytest tests/test_turbojpeg.py::TestCropFunctionality -v
 ```
 
 ### Run Specific Tests
 ```bash
 # Run a single test
-pytest test_turbojpeg.py::TestDecode::test_decode_basic -v
+pytest tests/test_turbojpeg.py::TestDecode::test_decode_basic -v
 ```
 
 ### Generate Coverage Report
 ```bash
-pytest test_turbojpeg.py --cov=turbojpeg --cov-report=html
+pytest tests/test_turbojpeg.py --cov=turbojpeg --cov-report=html
 ```
 
 ## Test Structure
@@ -125,10 +127,10 @@ Example memory limits:
 To run tests with memory profiling:
 ```bash
 # Run with memray memory tracking
-pytest test_turbojpeg.py::TestMemoryManagement -v
+pytest tests/test_turbojpeg.py::TestMemoryManagement -v
 
 # Generate memory flamegraph for a specific test
-pytest --memray test_turbojpeg.py::TestMemoryManagement::test_encode_decode_stress_1000_cycles
+pytest --memray tests/test_turbojpeg.py::TestMemoryManagement::test_encode_decode_stress_1000_cycles
 ```
 
 ## Test Data
@@ -140,7 +142,7 @@ The test suite uses synthetic test images generated via fixtures:
 - `sample_image` - Alias for sample_bgr_image (used in regression tests)
 - `encoded_sample_jpeg` - Pre-encoded JPEG for decoding tests
 - `valid_jpeg` - Valid encoded JPEG for testing
-- `test_crop_input.jpg` - 200x200 image with colored quadrants for crop tests
+- `tests/test_crop_input.jpg` - 200x200 image with colored quadrants for crop tests
 
 ## Test Statistics
 
