@@ -9,6 +9,9 @@ setup(
     url='https://github.com/lilohuang/PyTurboJPEG',
     license='MIT',
     install_requires=['numpy'],
+    extras_require={
+        'test': ['pytest>=7.0.0'],
+    },
     py_modules=['turbojpeg'],
     packages=find_packages(),
     long_description_content_type='text/markdown',
