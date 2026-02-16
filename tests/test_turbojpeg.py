@@ -1185,16 +1185,7 @@ class TestCropFunctionality:
         assert height == 48
     
     def test_crop_preserves_quality(self, jpeg_instance, test_crop_image):
-        """Test that crop is lossless (same quality).
-        
-        Note: With TurboJPEG 3.0+, the DCT implementation may produce different
-        rounding results when decoding cropped images, leading to larger pixel
-        differences than with TurboJPEG 2.x. This test is skipped for now as the
-        crop operation itself is still lossless in the JPEG domain; the difference
-        appears in the decode step.
-        """
-        pytest.skip("TurboJPEG 3.0+ DCT implementation produces different decoding results for cropped images")
-        
+        """Test that crop is lossless (same quality)."""
         # Crop a region
         cropped = jpeg_instance.crop(test_crop_image, 16, 16, 64, 64)
         

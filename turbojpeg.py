@@ -506,8 +506,10 @@ class TurboJPEG(object):
                     [scaled_height, scaled_width, tjPixelSize[pixel_format]],
                     dtype=np.uint8)
             dest_addr = self.__getaddr(img_array)
+            # pitch should be width * bytes_per_pixel (samples per row)
+            pitch = scaled_width * tjPixelSize[pixel_format]
             status = self.__decompress(
-                handle, src_addr, jpeg_array.size, dest_addr, scaled_width, pixel_format)
+                handle, src_addr, jpeg_array.size, dest_addr, pitch, pixel_format)
             if status != 0:
                 self.__report_error(handle)
             return img_array
@@ -699,9 +701,12 @@ class TurboJPEG(object):
             y, h = self.__axis_to_image_boundaries(
                 y, h, height, preserve, tjMCUHeight[jpeg_subsample])
             region = CroppingRegion(x, y, w, h)
-            crop_transform = TransformStruct(region, TJXOP_NONE,
-                TJXOPT_CROP | (gray and TJXOPT_GRAY) | (copynone and TJXOPT_COPYNONE))
-            return self.__do_transform(handle, src_addr, jpeg_array.size, 1, byref(crop_transform))[0]
+            # Use array initialization to ensure all fields are properly zero-initialized
+            crop_transforms = (TransformStruct * 1)()
+            crop_transforms[0].r = region
+            crop_transforms[0].op = TJXOP_NONE
+            crop_transforms[0].options = TJXOPT_CROP | (gray and TJXOPT_GRAY) | (copynone and TJXOPT_COPYNONE)
+            return self.__do_transform(handle, src_addr, jpeg_array.size, 1, crop_transforms)[0]
 
         finally:
             self.__destroy(handle)
