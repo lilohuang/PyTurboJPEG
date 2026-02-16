@@ -879,17 +879,18 @@ class TurboJPEG(object):
         scaled_width = width
         scaled_height = height
         if scaling_factor is not None:
+            num, denom = scaling_factor[0], scaling_factor[1]
             sf = ScalingFactor()
-            sf.num = scaling_factor[0]
-            sf.denom = scaling_factor[1]
+            sf.num = num
+            sf.denom = denom
             status = self.__set_scaling_factor(handle, sf)
             if status != 0:
                 self.__report_error(handle)
             # Calculate scaled dimensions manually
-            def get_scaled_value(dim, num, denom):
-                return (dim * num + denom - 1) // denom
-            scaled_width = get_scaled_value(width, scaling_factor[0], scaling_factor[1])
-            scaled_height = get_scaled_value(height, scaling_factor[0], scaling_factor[1])
+            def get_scaled_value(dim, n, d):
+                return (dim * n + d - 1) // d
+            scaled_width = get_scaled_value(width, num, denom)
+            scaled_height = get_scaled_value(height, num, denom)
         
         return scaled_width, scaled_height, jpeg_subsample, jpeg_colorspace
 
