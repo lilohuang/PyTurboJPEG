@@ -25,10 +25,23 @@ jobs:
         python-version: ${{ matrix.python-version }}
         allow-prereleases: true
     
-    - name: Install system dependencies
+    - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libturbojpeg
+        sudo apt-get install -y cmake nasm
+    
+    - name: Install libjpeg-turbo 3.1.0 from source
+      run: |
+        cd /tmp
+        wget -q https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.0/libjpeg-turbo-3.1.0.tar.gz
+        tar -xzf libjpeg-turbo-3.1.0.tar.gz
+        cd libjpeg-turbo-3.1.0
+        mkdir build
+        cd build
+        cmake -DCMAKE_INSTALL_PREFIX=/usr/local ..
+        make -j$(nproc)
+        sudo make install
+        sudo ldconfig
     
     - name: Install Python dependencies
       run: |
