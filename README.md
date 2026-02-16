@@ -2,8 +2,10 @@
 A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image.
 
 ## Prerequisites
-- [libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo/releases)
+- [libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo/releases) **3.0 or later** (required for PyTurboJPEG 2.0+)
 - [numpy](https://github.com/numpy/numpy)
+
+**Important**: PyTurboJPEG 2.0+ requires libjpeg-turbo 3.0 or later as it uses the new function-based TurboJPEG 3 API. If you need to use libjpeg-turbo 2.x, please use PyTurboJPEG 1.x instead.
 
 ## Example
 
