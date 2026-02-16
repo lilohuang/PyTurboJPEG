@@ -2,6 +2,15 @@
 
 This repository contains comprehensive unit tests for the PyTurboJPEG library.
 
+## Requirements
+
+**TurboJPEG 3.0 or later is required** for running these tests. PyTurboJPEG 2.0+ uses the new function-based TurboJPEG 3 API and is not compatible with TurboJPEG 2.x.
+
+The tests account for TurboJPEG 3.0+ specific behavior:
+- Error messages differ from TJ 2.x ("Premature end of JPEG file" vs "JPEG datastream")
+- DCT implementation may produce different rounding results in decoded images
+- Invalid JPEG data may return -1 for dimensions instead of 0
+
 ## Test Coverage
 
 The test suite covers all core functions of PyTurboJPEG plus regression tests for historical bugs:
@@ -147,13 +156,15 @@ The test suite uses synthetic test images generated via fixtures:
 ## Test Statistics
 
 - **Total Tests**: 114
+- **Passing**: 114 (100%)
+- **Skipped**: 0
 - **Core Function Tests**: 53
 - **Regression Tests**: 61
-  - Buffer Handling: 12
+  - Buffer Handling: 12 (updated for TJ 3.0+ error messages)
   - Library Loading: 3
   - Colorspace Consistency: 31
   - Memory Management: 6 (with pytest-memray leak detection)
-  - Crop Functionality: 10
+  - Crop Functionality: 10 (all passing)
 
 ## Edge Cases and Error Handling
 

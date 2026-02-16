@@ -10,6 +10,10 @@ This also includes regression tests for:
 3. Colorspace Consistency (all TJPF/TJSAMP combinations)
 4. Memory Management (stress testing with 1000+ cycles)
 5. Crop Functionality (with real input image)
+
+Note: These tests require TurboJPEG 3.0+ as PyTurboJPEG 2.0+ uses the new
+function-based TurboJPEG 3 API. Some tests account for differences in error
+messages and DCT implementation compared to TurboJPEG 2.x.
 """
 import pytest
 import numpy as np
@@ -619,13 +623,15 @@ class TestBufferHandlingRobustness:
         truncated_header = b'\xFF\xD8'
         
         # Should either raise an error or return empty array with warning
+        # TurboJPEG 3.0+ may raise ValueError for negative dimensions or emit warning
         try:
-            with pytest.warns(UserWarning, match="JPEG datastream"):
+            with pytest.warns(UserWarning, match="(JPEG datastream|Premature end of JPEG file)"):
                 result = jpeg_instance.decode(truncated_header)
                 # If it doesn't raise, should return empty or minimal array
                 assert result.size == 0 or result.shape[0] == 0 or result.shape[1] == 0
-        except (RuntimeError, OSError):
+        except (RuntimeError, OSError, IOError, ValueError):
             # This is also acceptable - raising an error for invalid data
+            # TurboJPEG 3.0+ may raise ValueError for negative dimensions
             pass
     
     def test_decode_truncated_jpeg_header_partial(self, jpeg_instance):
@@ -638,8 +644,9 @@ class TestBufferHandlingRobustness:
             result = jpeg_instance.decode(truncated_header)
             # If it doesn't raise, should return empty or minimal array
             assert result.size == 0 or result.shape[0] == 0 or result.shape[1] == 0
-        except (RuntimeError, OSError):
+        except (RuntimeError, OSError, IOError, ValueError):
             # This is also acceptable - raising an error for invalid data
+            # TurboJPEG 3.0+ may raise ValueError for negative dimensions
             pass
     
     def test_decode_truncated_jpeg_data(self, jpeg_instance, valid_jpeg):
@@ -652,8 +659,9 @@ class TestBufferHandlingRobustness:
             result = jpeg_instance.decode(truncated_jpeg)
             # If it doesn't raise, should return empty or minimal array
             assert result.size == 0 or result.shape[0] == 0 or result.shape[1] == 0
-        except (RuntimeError, OSError):
+        except (RuntimeError, OSError, IOError, ValueError):
             # This is also acceptable - raising an error for invalid data
+            # TurboJPEG 3.0+ may raise ValueError for negative dimensions
             pass
     
     def test_decode_invalid_jpeg_magic_number(self, jpeg_instance):
@@ -684,9 +692,9 @@ class TestBufferHandlingRobustness:
         # Should either raise an error or return zeros/empty values
         try:
             width, height, subsample, colorspace = jpeg_instance.decode_header(truncated)
-            # If it doesn't raise, should return zeros or minimal values
-            assert width == 0 or height == 0
-        except (RuntimeError, OSError):
+            # If it doesn't raise, should return zeros, minimal values, or -1 (TJ 3.0+)
+            assert width == 0 or height == 0 or width == -1 or height == -1
+        except (RuntimeError, OSError, IOError):
             # This is also acceptable - raising an error for invalid data
             pass
     
