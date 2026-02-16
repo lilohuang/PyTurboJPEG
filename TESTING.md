@@ -156,17 +156,15 @@ The test suite uses synthetic test images generated via fixtures:
 ## Test Statistics
 
 - **Total Tests**: 114
-- **Passing**: 113 (99.1%)
-- **Skipped**: 1 (crop quality test - TJ 3.0 DCT differences)
+- **Passing**: 114 (100%)
+- **Skipped**: 0
 - **Core Function Tests**: 53
 - **Regression Tests**: 61
   - Buffer Handling: 12 (updated for TJ 3.0+ error messages)
   - Library Loading: 3
   - Colorspace Consistency: 31
   - Memory Management: 6 (with pytest-memray leak detection)
-  - Crop Functionality: 9 passing, 1 skipped
-
-**Note**: One test is skipped (`test_crop_preserves_quality`) because TurboJPEG 3.0's DCT implementation produces different decoding results compared to TJ 2.x. The crop operation itself remains lossless in the JPEG domain; the difference appears during the decode step.
+  - Crop Functionality: 10 (all passing)
 
 ## Edge Cases and Error Handling
 
