@@ -785,10 +785,6 @@ class TestLibraryLoading:
         mock_old_lib.tjDestroy = Mock()
         mock_old_lib.tjGetScalingFactors = Mock(return_value=Mock())
         
-        # Ensure tj3Init is NOT present to simulate old library
-        if hasattr(mock_old_lib, 'tj3Init'):
-            delattr(mock_old_lib, 'tj3Init')
-        
         # Patch cdll.LoadLibrary to return our mock old library
         with patch('turbojpeg.cdll.LoadLibrary', return_value=mock_old_lib):
             with pytest.raises(RuntimeError) as excinfo:
@@ -818,11 +814,7 @@ class TestLibraryLoading:
                           'tj3Compress8', 'tj3CompressFromYUV8', 'tj3Transform',
                           'tj3Free', 'tj3Alloc', 'tj3GetErrorStr', 'tj3GetErrorCode',
                           'tjGetScalingFactors']:
-            mock_func = Mock()
-            # Set argtypes and restype to prevent errors
-            mock_func.argtypes = []
-            mock_func.restype = None
-            setattr(mock_new_lib, func_name, mock_func)
+            setattr(mock_new_lib, func_name, Mock())
         
         # Mock tjGetScalingFactors to return proper structure
         mock_scaling_factors = MagicMock()
