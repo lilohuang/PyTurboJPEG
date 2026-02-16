@@ -1,10 +1,10 @@
 # PyTurboJPEG Test Suite
 
-This directory contains comprehensive unit tests for the PyTurboJPEG library.
+This repository contains comprehensive unit tests for the PyTurboJPEG library.
 
 ## Test Coverage
 
-The test suite covers all core functions of PyTurboJPEG:
+The test suite covers all core functions of PyTurboJPEG plus regression tests for historical bugs:
 
 ### Core Functions Tested
 - **TurboJPEG Initialization** - Tests default initialization and library loading
@@ -29,6 +29,12 @@ The test suite covers all core functions of PyTurboJPEG:
 5. **Transformation Tests** - Test crop and scale operations
 6. **Error Handling Tests** - Test error conditions and edge cases
 7. **Integration Tests** - Test complete workflows and roundtrip operations
+8. **Regression Tests** - Tests for historical bugs and edge cases:
+   - **Buffer Handling Robustness** (12 tests) - Empty buffers, truncated headers, corrupted data
+   - **Library Loading** (3 tests) - Missing library error handling with clear messages
+   - **Colorspace Consistency** (31 tests) - All TJPF/TJSAMP combinations
+   - **Memory Management** (6 tests) - 1000+ encode/decode cycles with memory leak detection using pytest-memray
+   - **Crop Functionality** (10 tests) - Comprehensive crop testing with real input image
 
 ## Running the Tests
 
@@ -40,41 +46,50 @@ sudo apt-get install libturbojpeg  # On Ubuntu/Debian
 brew install jpeg-turbo  # On macOS
 
 # Install Python dependencies
-pip install numpy pytest
+pip install numpy pytest pytest-memray
 ```
 
 ### Run All Tests
 ```bash
-pytest test_turbojpeg.py -v
+pytest tests/test_turbojpeg.py -v
+# Or run all tests in the tests directory
+pytest tests/ -v
 ```
 
 ### Run Specific Test Classes
 ```bash
 # Run only decode tests
-pytest test_turbojpeg.py::TestDecode -v
+pytest tests/test_turbojpeg.py::TestDecode -v
 
 # Run only encode tests
-pytest test_turbojpeg.py::TestEncode -v
+pytest tests/test_turbojpeg.py::TestEncode -v
 
 # Run only integration tests
-pytest test_turbojpeg.py::TestIntegration -v
+pytest tests/test_turbojpeg.py::TestIntegration -v
+
+# Run regression tests
+pytest tests/test_turbojpeg.py::TestBufferHandlingRobustness -v
+pytest tests/test_turbojpeg.py::TestColorspaceConsistency -v
+pytest tests/test_turbojpeg.py::TestMemoryManagement -v
+pytest tests/test_turbojpeg.py::TestCropFunctionality -v
 ```
 
 ### Run Specific Tests
 ```bash
 # Run a single test
-pytest test_turbojpeg.py::TestDecode::test_decode_basic -v
+pytest tests/test_turbojpeg.py::TestDecode::test_decode_basic -v
 ```
 
 ### Generate Coverage Report
 ```bash
-pytest test_turbojpeg.py --cov=turbojpeg --cov-report=html
+pytest tests/test_turbojpeg.py --cov=turbojpeg --cov-report=html
 ```
 
 ## Test Structure
 
 Each test class focuses on a specific function or feature:
 
+### Core Function Tests
 - `TestTurboJPEGInitialization` - Tests initialization and properties
 - `TestDecodeHeader` - Tests header decoding functionality
 - `TestDecode` - Tests image decoding functionality
@@ -89,24 +104,72 @@ Each test class focuses on a specific function or feature:
 - `TestErrorHandling` - Tests error conditions
 - `TestIntegration` - Tests complete workflows
 
+### Regression Tests
+- `TestBufferHandlingRobustness` - Invalid buffer handling tests
+- `TestLibraryLoading` - Library loading and error message tests
+- `TestColorspaceConsistency` - All pixel format/subsampling combinations
+- `TestMemoryManagement` - Stress testing with 1000+ cycles and memory leak detection
+- `TestCropFunctionality` - Crop function with real input image
+
+## Memory Leak Detection
+
+The `TestMemoryManagement` class uses **pytest-memray** to detect memory leaks during repeated function execution. Each test is decorated with `@pytest.mark.limit_memory()` to set memory growth limits:
+
+- Tests will fail if memory usage exceeds the specified limit
+- Helps catch slow memory leaks that accumulate over many iterations
+- Memory limits are tuned based on expected working set size for each test
+
+Example memory limits:
+- `test_encode_decode_stress_1000_cycles`: 50 MB limit
+- `test_encode_decode_varying_sizes_stress`: 100 MB limit (larger images)
+- `test_decode_header_stress`: 20 MB limit (header-only operations)
+
+To run tests with memory profiling:
+```bash
+# Run with memray memory tracking
+pytest tests/test_turbojpeg.py::TestMemoryManagement -v
+
+# Generate memory flamegraph for a specific test
+pytest --memray tests/test_turbojpeg.py::TestMemoryManagement::test_encode_decode_stress_1000_cycles
+```
+
 ## Test Data
 
 The test suite uses synthetic test images generated via fixtures:
 - `sample_bgr_image` - 100x100 BGR gradient image
 - `sample_rgb_image` - 100x100 RGB gradient image
 - `sample_gray_image` - 100x100 grayscale gradient image
+- `sample_image` - Alias for sample_bgr_image (used in regression tests)
 - `encoded_sample_jpeg` - Pre-encoded JPEG for decoding tests
+- `valid_jpeg` - Valid encoded JPEG for testing
+- `tests/test_crop_input.jpg` - 200x200 image with colored quadrants for crop tests
+
+## Test Statistics
+
+- **Total Tests**: 114
+- **Core Function Tests**: 53
+- **Regression Tests**: 61
+  - Buffer Handling: 12
+  - Library Loading: 3
+  - Colorspace Consistency: 31
+  - Memory Management: 6 (with pytest-memray leak detection)
+  - Crop Functionality: 10
 
 ## Edge Cases and Error Handling
 
 The tests verify:
 - Invalid JPEG data handling
 - Empty buffer handling
+- Truncated JPEG headers and data
+- Corrupted JPEG data
 - Invalid scaling factors
 - Invalid image shapes
 - Buffer size validation
 - Various pixel format conversions
 - Different quality levels and their impact
+- MCU alignment in crop operations
+- Memory stability under stress
+- Memory leak detection during repeated operations
 
 ## Contributing
 
