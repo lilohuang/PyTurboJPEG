@@ -902,10 +902,14 @@ class TestMemoryManagement:
     
     These tests perform 1000+ compression/decompression cycles to check for
     memory leaks, segfaults, or other stability issues.
+    
+    pytest-memray is used to detect unexpected memory growth during repeated
+    execution to catch slow memory leaks.
     """
     
+    @pytest.mark.limit_memory("50 MB")
     def test_encode_decode_stress_1000_cycles(self, jpeg_instance):
-        """Test 1000+ encode/decode cycles for memory stability."""
+        """Test 1000+ encode/decode cycles for memory stability with leak detection."""
         # Create a test image
         test_img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
         
@@ -923,6 +927,7 @@ class TestMemoryManagement:
             if i % 100 == 0:
                 test_img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
     
+    @pytest.mark.limit_memory("100 MB")
     def test_encode_decode_varying_sizes_stress(self, jpeg_instance):
         """Test encode/decode cycles with varying image sizes for memory stability."""
         sizes = [(50, 50), (100, 100), (200, 200), (150, 100), (100, 150)]
@@ -942,6 +947,7 @@ class TestMemoryManagement:
                 decoded = jpeg_instance.decode(jpeg_buf)
                 assert decoded.shape == (height, width, 3)
     
+    @pytest.mark.limit_memory("50 MB")
     def test_encode_decode_different_formats_stress(self, jpeg_instance):
         """Test encode/decode cycles with different pixel formats for stability."""
         formats = [TJPF_RGB, TJPF_BGR, TJPF_GRAY]
@@ -969,6 +975,7 @@ class TestMemoryManagement:
                 decoded = jpeg_instance.decode(jpeg_buf, pixel_format=pixel_format)
                 assert decoded.shape == test_img.shape
     
+    @pytest.mark.limit_memory("20 MB")
     def test_decode_header_stress(self, jpeg_instance, valid_jpeg):
         """Test decode_header repeatedly for memory stability."""
         # Perform 1000 decode_header operations
@@ -979,6 +986,7 @@ class TestMemoryManagement:
             assert subsample in [TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_GRAY]
             assert colorspace in [TJCS_RGB, TJCS_YCbCr, TJCS_GRAY]
     
+    @pytest.mark.limit_memory("20 MB")
     def test_buffer_size_calculation_stress(self, jpeg_instance):
         """Test buffer_size calculation repeatedly for memory stability."""
         test_img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
@@ -989,6 +997,7 @@ class TestMemoryManagement:
             assert buffer_size > 0
             assert isinstance(buffer_size, int)
     
+    @pytest.mark.limit_memory("50 MB")
     def test_multiple_instances_stress(self):
         """Test creating and using multiple TurboJPEG instances for stability."""
         test_img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)

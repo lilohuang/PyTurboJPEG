@@ -33,7 +33,7 @@ The test suite covers all core functions of PyTurboJPEG plus regression tests fo
    - **Buffer Handling Robustness** (12 tests) - Empty buffers, truncated headers, corrupted data
    - **Library Loading** (3 tests) - Missing library error handling with clear messages
    - **Colorspace Consistency** (31 tests) - All TJPF/TJSAMP combinations
-   - **Memory Management** (5 tests) - 1000+ encode/decode cycles for stability
+   - **Memory Management** (6 tests) - 1000+ encode/decode cycles with memory leak detection using pytest-memray
    - **Crop Functionality** (10 tests) - Comprehensive crop testing with real input image
 
 ## Running the Tests
@@ -46,7 +46,7 @@ sudo apt-get install libturbojpeg  # On Ubuntu/Debian
 brew install jpeg-turbo  # On macOS
 
 # Install Python dependencies
-pip install numpy pytest
+pip install numpy pytest pytest-memray
 ```
 
 ### Run All Tests
@@ -106,8 +106,30 @@ Each test class focuses on a specific function or feature:
 - `TestBufferHandlingRobustness` - Invalid buffer handling tests
 - `TestLibraryLoading` - Library loading and error message tests
 - `TestColorspaceConsistency` - All pixel format/subsampling combinations
-- `TestMemoryManagement` - Stress testing with 1000+ cycles
+- `TestMemoryManagement` - Stress testing with 1000+ cycles and memory leak detection
 - `TestCropFunctionality` - Crop function with real input image
+
+## Memory Leak Detection
+
+The `TestMemoryManagement` class uses **pytest-memray** to detect memory leaks during repeated function execution. Each test is decorated with `@pytest.mark.limit_memory()` to set memory growth limits:
+
+- Tests will fail if memory usage exceeds the specified limit
+- Helps catch slow memory leaks that accumulate over many iterations
+- Memory limits are tuned based on expected working set size for each test
+
+Example memory limits:
+- `test_encode_decode_stress_1000_cycles`: 50 MB limit
+- `test_encode_decode_varying_sizes_stress`: 100 MB limit (larger images)
+- `test_decode_header_stress`: 20 MB limit (header-only operations)
+
+To run tests with memory profiling:
+```bash
+# Run with memray memory tracking
+pytest test_turbojpeg.py::TestMemoryManagement -v
+
+# Generate memory flamegraph for a specific test
+pytest --memray test_turbojpeg.py::TestMemoryManagement::test_encode_decode_stress_1000_cycles
+```
 
 ## Test Data
 
@@ -128,7 +150,7 @@ The test suite uses synthetic test images generated via fixtures:
   - Buffer Handling: 12
   - Library Loading: 3
   - Colorspace Consistency: 31
-  - Memory Management: 5
+  - Memory Management: 6 (with pytest-memray leak detection)
   - Crop Functionality: 10
 
 ## Edge Cases and Error Handling
@@ -145,6 +167,7 @@ The tests verify:
 - Different quality levels and their impact
 - MCU alignment in crop operations
 - Memory stability under stress
+- Memory leak detection during repeated operations
 
 ## Contributing
 
