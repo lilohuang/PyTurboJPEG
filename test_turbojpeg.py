@@ -562,6 +562,3 @@ class TestIntegration:
             decoded = jpeg_instance.decode(jpeg_buf)
             assert decoded.shape == (height, width, 3)
 
-
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
