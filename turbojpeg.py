@@ -553,7 +553,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def decode(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0, dst=None, precision=8):
+    def decode(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0, dst=None):
         """decodes JPEG memory buffer to numpy array.
         
         Parameters
@@ -568,23 +568,15 @@ class TurboJPEG(object):
             Decompression flags
         dst : ndarray or None
             Destination array (optional)
-        precision : int
-            Precision level (8, 12, or 16 bits)
             
         Returns
         -------
         ndarray
-            Decoded image as numpy array (uint8 for 8-bit, uint16 for 12/16-bit)
+            Decoded image as numpy array (uint8)
         """
-        if precision not in [8, 12, 16]:
-            raise ValueError('precision must be 8, 12, or 16')
-        
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
             # Set decompression parameters using tj3Set
-            # NOTE: TJPARAM_PRECISION is read-only for decompression - it's determined
-            # from the JPEG header. The precision parameter here just selects which
-            # decompress function to use (tj3Decompress8/12/16).
             if flags & TJFLAG_BOTTOMUP:
                 self.__set(handle, TJPARAM_BOTTOMUP, 1)
             if flags & TJFLAG_FASTUPSAMPLE:
@@ -599,43 +591,20 @@ class TurboJPEG(object):
             scaled_width, scaled_height, _, _ = \
                 self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
             
-            # Choose dtype and decompress function based on precision
-            if precision == 8:
-                dtype = np.uint8
-                if ((type(dst) == np.ndarray) and
-                    (dst.shape == (scaled_height, scaled_width, tjPixelSize[pixel_format])) and
-                    (dst.dtype == dtype)):
-                    img_array = dst
-                else:
-                    img_array = np.empty(
-                        [scaled_height, scaled_width, tjPixelSize[pixel_format]],
-                        dtype=dtype)
-                dest_addr = self.__getaddr(img_array)
-                # pitch should be width * bytes_per_pixel (samples per row)
-                pitch = scaled_width * tjPixelSize[pixel_format]
-                status = self.__decompress(
-                    handle, src_addr, jpeg_array.size, dest_addr, pitch, pixel_format)
+            dtype = np.uint8
+            if ((type(dst) == np.ndarray) and
+                (dst.shape == (scaled_height, scaled_width, tjPixelSize[pixel_format])) and
+                (dst.dtype == dtype)):
+                img_array = dst
             else:
-                # 12-bit or 16-bit precision
-                dtype = np.uint16
-                if ((type(dst) == np.ndarray) and
-                    (dst.shape == (scaled_height, scaled_width, tjPixelSize[pixel_format])) and
-                    (dst.dtype == dtype)):
-                    img_array = dst
-                else:
-                    img_array = np.empty(
-                        [scaled_height, scaled_width, tjPixelSize[pixel_format]],
-                        dtype=dtype)
-                dest_addr = self.__getaddr_uint16(img_array)
-                # pitch should be width * samples_per_pixel (not bytes)
-                pitch = scaled_width * tjPixelSize[pixel_format]
-                
-                if precision == 12:
-                    status = self.__decompress12(
-                        handle, src_addr, jpeg_array.size, dest_addr, pitch, pixel_format)
-                else:  # precision == 16
-                    status = self.__decompress16(
-                        handle, src_addr, jpeg_array.size, dest_addr, pitch, pixel_format)
+                img_array = np.empty(
+                    [scaled_height, scaled_width, tjPixelSize[pixel_format]],
+                    dtype=dtype)
+            dest_addr = self.__getaddr(img_array)
+            # pitch should be width * bytes_per_pixel (samples per row)
+            pitch = scaled_width * tjPixelSize[pixel_format]
+            status = self.__decompress(
+                handle, src_addr, jpeg_array.size, dest_addr, pitch, pixel_format)
             
             if status != 0:
                 self.__report_error(handle)
@@ -699,58 +668,36 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None, precision=8, lossless=False):
+    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None):
         """encodes numpy array to JPEG memory buffer.
         
         Parameters
         ----------
         img_array : ndarray
-            Image data to encode (uint8 for 8-bit, uint16 for 12/16-bit)
+            Image data to encode (uint8)
         quality : int
-            JPEG quality (1-100) - ignored for lossless mode
+            JPEG quality (1-100)
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         jpeg_subsample : int
-            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.) - ignored for lossless mode
+            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.)
         flags : int
             Compression flags
         dst : buffer or None
             Destination buffer (optional)
-        precision : int
-            Precision level (8, 12, or 16 bits)
-            Note: 16-bit precision requires lossless=True
-        lossless : bool
-            Enable lossless JPEG compression (default: False)
-            When True, quality and jpeg_subsample parameters are ignored
             
         Returns
         -------
         bytes
             JPEG image data
-            
-        Raises
-        ------
-        ValueError
-            If precision is not 8, 12, or 16, or if 16-bit is used without lossless=True
         """
-        if precision not in [8, 12, 16]:
-            raise ValueError('precision must be 8, 12, or 16')
-        
         handle = self.__init(TJINIT_COMPRESS)
         try:
             # Set compression parameters using tj3Set
-            # Enable lossless mode if requested
-            if lossless:
-                if self.__set(handle, TJPARAM_LOSSLESS, 1) != 0:
-                    self.__report_error(handle)
-                # In lossless mode, subsampling is automatically set to 4:4:4
-                # and quality parameter is ignored
-            else:
-                # Set standard lossy parameters
-                if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
-                    self.__report_error(handle)
-                if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
-                    self.__report_error(handle)
+            if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
+                self.__report_error(handle)
+            if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
+                self.__report_error(handle)
             if flags & TJFLAG_PROGRESSIVE:
                 if self.__set(handle, TJPARAM_PROGRESSIVE, 1) != 0:
                     self.__report_error(handle)
@@ -760,19 +707,9 @@ class TurboJPEG(object):
             
             img_array = np.ascontiguousarray(img_array)
             
-            # Validate dtype matches precision
-            if precision == 8 and img_array.dtype != np.uint8:
-                raise ValueError('img_array must be uint8 for 8-bit precision')
-            elif precision in [12, 16] and img_array.dtype != np.uint16:
-                raise ValueError('img_array must be uint16 for 12/16-bit precision')
-            
-            # 16-bit precision requires lossless mode
-            if precision == 16 and not lossless:
-                raise ValueError(
-                    '16-bit precision requires lossless=True. '
-                    'The JPEG standard only supports 16-bit for lossless compression. '
-                    'Use encode_16bit() method or set lossless=True.'
-                )
+            # Validate dtype is uint8
+            if img_array.dtype != np.uint8:
+                raise ValueError('img_array must be uint8')
             
             if dst is not None and not self.__is_buffer(dst):
                 raise TypeError('\'dst\' argument must support buffer protocol')
@@ -790,26 +727,10 @@ class TurboJPEG(object):
             if channel > 1 and (len(img_array.shape) < 3 or img_array.shape[2] != channel):
                 raise ValueError('Invalid shape for image data')
             
-            if precision == 8:
-                src_addr = self.__getaddr(img_array)
-                status = self.__compress(
-                    handle, src_addr, width, img_array.strides[0], height, pixel_format,
-                    byref(jpeg_buf), byref(jpeg_size))
-            else:
-                # 12-bit or 16-bit precision
-                src_addr = self.__getaddr_uint16(img_array)
-                # For 12/16-bit, stride is in samples (uint16), not bytes
-                # Note: uint16 is 2 bytes on all supported platforms
-                stride_samples = img_array.strides[0] // 2  # Convert bytes to uint16 count (2 bytes per uint16)
-                
-                if precision == 12:
-                    status = self.__compress12(
-                        handle, src_addr, width, stride_samples, height, pixel_format,
-                        byref(jpeg_buf), byref(jpeg_size))
-                else:  # precision == 16
-                    status = self.__compress16(
-                        handle, src_addr, width, stride_samples, height, pixel_format,
-                        byref(jpeg_buf), byref(jpeg_size))
+            src_addr = self.__getaddr(img_array)
+            status = self.__compress(
+                handle, src_addr, width, img_array.strides[0], height, pixel_format,
+                byref(jpeg_buf), byref(jpeg_size))
             
             if status != 0:
                 self.__report_error(handle)
@@ -909,8 +830,58 @@ class TurboJPEG(object):
         bytes
             JPEG image data (lossy or lossless depending on lossless parameter)
         """
-        return self.encode(img_array, quality=quality, pixel_format=pixel_format, 
-                          jpeg_subsample=jpeg_subsample, flags=flags, precision=12, lossless=lossless)
+        handle = self.__init(TJINIT_COMPRESS)
+        try:
+            # Set compression parameters using tj3Set
+            # Enable lossless mode if requested
+            if lossless:
+                if self.__set(handle, TJPARAM_LOSSLESS, 1) != 0:
+                    self.__report_error(handle)
+                # In lossless mode, subsampling is automatically set to 4:4:4
+                # and quality parameter is ignored
+            else:
+                # Set standard lossy parameters
+                if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
+                    self.__report_error(handle)
+                if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
+                    self.__report_error(handle)
+            if flags & TJFLAG_PROGRESSIVE:
+                if self.__set(handle, TJPARAM_PROGRESSIVE, 1) != 0:
+                    self.__report_error(handle)
+            if flags & TJFLAG_FASTDCT:
+                if self.__set(handle, TJPARAM_FASTDCT, 1) != 0:
+                    self.__report_error(handle)
+            
+            img_array = np.ascontiguousarray(img_array)
+            
+            # Validate dtype is uint16 for 12-bit precision
+            if img_array.dtype != np.uint16:
+                raise ValueError('img_array must be uint16 for 12-bit precision')
+            
+            jpeg_buf = c_void_p()
+            jpeg_size = c_size_t()
+            height, width = img_array.shape[:2]
+            channel = tjPixelSize[pixel_format]
+            if channel > 1 and (len(img_array.shape) < 3 or img_array.shape[2] != channel):
+                raise ValueError('Invalid shape for image data')
+            
+            # 12-bit precision
+            src_addr = self.__getaddr_uint16(img_array)
+            # For 12-bit, stride is in samples (uint16), not bytes
+            # Note: uint16 is 2 bytes on all supported platforms
+            stride_samples = img_array.strides[0] // 2  # Convert bytes to uint16 count (2 bytes per uint16)
+            
+            status = self.__compress12(
+                handle, src_addr, width, stride_samples, height, pixel_format,
+                byref(jpeg_buf), byref(jpeg_size))
+            
+            if status != 0:
+                self.__report_error(handle)
+            result = self.__copy_from_buffer(jpeg_buf.value, jpeg_size.value)
+            self.__free(jpeg_buf)
+            return result
+        finally:
+            self.__destroy(handle)
     
     def encode_16bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0):
         """Encodes 16-bit numpy array (uint16) to lossless JPEG memory buffer.
@@ -937,8 +908,51 @@ class TurboJPEG(object):
         bytes
             Lossless JPEG image data
         """
-        return self.encode(img_array, quality=quality, pixel_format=pixel_format, 
-                          jpeg_subsample=jpeg_subsample, flags=flags, precision=16, lossless=True)
+        handle = self.__init(TJINIT_COMPRESS)
+        try:
+            # Set compression parameters using tj3Set
+            # 16-bit requires lossless mode
+            if self.__set(handle, TJPARAM_LOSSLESS, 1) != 0:
+                self.__report_error(handle)
+            # In lossless mode, subsampling is automatically set to 4:4:4
+            # and quality parameter is ignored
+            if flags & TJFLAG_PROGRESSIVE:
+                if self.__set(handle, TJPARAM_PROGRESSIVE, 1) != 0:
+                    self.__report_error(handle)
+            if flags & TJFLAG_FASTDCT:
+                if self.__set(handle, TJPARAM_FASTDCT, 1) != 0:
+                    self.__report_error(handle)
+            
+            img_array = np.ascontiguousarray(img_array)
+            
+            # Validate dtype is uint16 for 16-bit precision
+            if img_array.dtype != np.uint16:
+                raise ValueError('img_array must be uint16 for 16-bit precision')
+            
+            jpeg_buf = c_void_p()
+            jpeg_size = c_size_t()
+            height, width = img_array.shape[:2]
+            channel = tjPixelSize[pixel_format]
+            if channel > 1 and (len(img_array.shape) < 3 or img_array.shape[2] != channel):
+                raise ValueError('Invalid shape for image data')
+            
+            # 16-bit precision
+            src_addr = self.__getaddr_uint16(img_array)
+            # For 16-bit, stride is in samples (uint16), not bytes
+            # Note: uint16 is 2 bytes on all supported platforms
+            stride_samples = img_array.strides[0] // 2  # Convert bytes to uint16 count (2 bytes per uint16)
+            
+            status = self.__compress16(
+                handle, src_addr, width, stride_samples, height, pixel_format,
+                byref(jpeg_buf), byref(jpeg_size))
+            
+            if status != 0:
+                self.__report_error(handle)
+            result = self.__copy_from_buffer(jpeg_buf.value, jpeg_size.value)
+            self.__free(jpeg_buf)
+            return result
+        finally:
+            self.__destroy(handle)
     
     def decode_12bit(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0):
         """Decodes JPEG memory buffer to 12-bit numpy array (uint16).
@@ -959,8 +973,40 @@ class TurboJPEG(object):
         ndarray
             12-bit image as uint16 numpy array (values 0-4095)
         """
-        return self.decode(jpeg_buf, pixel_format=pixel_format, 
-                          scaling_factor=scaling_factor, flags=flags, precision=12)
+        handle = self.__init(TJINIT_DECOMPRESS)
+        try:
+            # Set decompression parameters using tj3Set
+            if flags & TJFLAG_BOTTOMUP:
+                self.__set(handle, TJPARAM_BOTTOMUP, 1)
+            if flags & TJFLAG_FASTUPSAMPLE:
+                self.__set(handle, TJPARAM_FASTUPSAMPLE, 1)
+            if flags & TJFLAG_FASTDCT:
+                self.__set(handle, TJPARAM_FASTDCT, 1)
+            if flags & TJFLAG_STOPONWARNING:
+                self.__set(handle, TJPARAM_STOPONWARNING, 1)
+            
+            jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
+            src_addr = self.__getaddr(jpeg_array)
+            scaled_width, scaled_height, _, _ = \
+                self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
+            
+            # 12-bit precision
+            dtype = np.uint16
+            img_array = np.empty(
+                [scaled_height, scaled_width, tjPixelSize[pixel_format]],
+                dtype=dtype)
+            dest_addr = self.__getaddr_uint16(img_array)
+            # pitch should be width * samples_per_pixel (not bytes)
+            pitch = scaled_width * tjPixelSize[pixel_format]
+            
+            status = self.__decompress12(
+                handle, src_addr, jpeg_array.size, dest_addr, pitch, pixel_format)
+            
+            if status != 0:
+                self.__report_error(handle)
+            return img_array
+        finally:
+            self.__destroy(handle)
     
     def decode_16bit(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0):
         """Decodes lossless 16-bit JPEG memory buffer to 16-bit numpy array (uint16).
@@ -989,8 +1035,40 @@ class TurboJPEG(object):
         IOError or OSError
             If the JPEG is not a 16-bit lossless JPEG image
         """
-        return self.decode(jpeg_buf, pixel_format=pixel_format, 
-                          scaling_factor=scaling_factor, flags=flags, precision=16)
+        handle = self.__init(TJINIT_DECOMPRESS)
+        try:
+            # Set decompression parameters using tj3Set
+            if flags & TJFLAG_BOTTOMUP:
+                self.__set(handle, TJPARAM_BOTTOMUP, 1)
+            if flags & TJFLAG_FASTUPSAMPLE:
+                self.__set(handle, TJPARAM_FASTUPSAMPLE, 1)
+            if flags & TJFLAG_FASTDCT:
+                self.__set(handle, TJPARAM_FASTDCT, 1)
+            if flags & TJFLAG_STOPONWARNING:
+                self.__set(handle, TJPARAM_STOPONWARNING, 1)
+            
+            jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
+            src_addr = self.__getaddr(jpeg_array)
+            scaled_width, scaled_height, _, _ = \
+                self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
+            
+            # 16-bit precision
+            dtype = np.uint16
+            img_array = np.empty(
+                [scaled_height, scaled_width, tjPixelSize[pixel_format]],
+                dtype=dtype)
+            dest_addr = self.__getaddr_uint16(img_array)
+            # pitch should be width * samples_per_pixel (not bytes)
+            pitch = scaled_width * tjPixelSize[pixel_format]
+            
+            status = self.__decompress16(
+                handle, src_addr, jpeg_array.size, dest_addr, pitch, pixel_format)
+            
+            if status != 0:
+                self.__report_error(handle)
+            return img_array
+        finally:
+            self.__destroy(handle)
 
     def crop(self, jpeg_buf, x, y, w, h, preserve=False, gray=False, copynone=False):
         """losslessly crop a jpeg image with optional grayscale"""
