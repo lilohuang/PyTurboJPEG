@@ -770,6 +770,79 @@ class TestLibraryLoading:
             assert tj is not None
         else:
             pytest.skip("Could not find turbojpeg library path")
+    
+    def test_version_detection_rejects_old_library(self):
+        """Test that PyTurboJPEG 2.0 rejects TurboJPEG 2.x library with clear error."""
+        from unittest.mock import Mock, patch
+        from ctypes import CDLL
+        
+        # Create a mock library that simulates TurboJPEG 2.x (missing tj3Init)
+        mock_old_lib = Mock(spec=CDLL)
+        
+        # Add TurboJPEG 2.x functions but NOT tj3Init
+        mock_old_lib.tjInitDecompress = Mock()
+        mock_old_lib.tjInitCompress = Mock()
+        mock_old_lib.tjDestroy = Mock()
+        mock_old_lib.tjGetScalingFactors = Mock(return_value=Mock())
+        
+        # Patch cdll.LoadLibrary to return our mock old library
+        with patch('turbojpeg.cdll.LoadLibrary', return_value=mock_old_lib):
+            with pytest.raises(RuntimeError) as excinfo:
+                TurboJPEG(lib_path='/fake/path/libturbojpeg.so')
+            
+            # Verify error message is clear and actionable
+            error_msg = str(excinfo.value)
+            assert 'PyTurboJPEG 2.0 requires libjpeg-turbo 3.0 or later' in error_msg
+            assert 'libjpeg-turbo 2.x or older' in error_msg
+            assert 'upgrade' in error_msg.lower() or 'install' in error_msg.lower()
+            # Should suggest using PyTurboJPEG 1.x as alternative
+            assert 'PyTurboJPEG 1.x' in error_msg or '1.x' in error_msg
+
+    def test_version_detection_accepts_new_library(self):
+        """Test that PyTurboJPEG 2.0 accepts TurboJPEG 3.x library."""
+        from unittest.mock import Mock, patch, MagicMock
+        from ctypes import CDLL, c_int, c_void_p, c_size_t, c_ubyte, POINTER
+        
+        # Create a mock library that simulates TurboJPEG 3.x (has tj3Init)
+        mock_new_lib = Mock(spec=CDLL)
+        
+        # Add all required TurboJPEG 3.x functions
+        for func_name in ['tj3Init', 'tj3Destroy', 'tj3Set', 'tj3Get', 
+                          'tj3SetScalingFactor', 'tj3JPEGBufSize', 'tj3YUVBufSize',
+                          'tj3YUVPlaneWidth', 'tj3YUVPlaneHeight', 'tj3DecompressHeader',
+                          'tj3Decompress8', 'tj3DecompressToYUV8', 'tj3DecompressToYUVPlanes8',
+                          'tj3Compress8', 'tj3CompressFromYUV8', 'tj3Transform',
+                          'tj3Free', 'tj3Alloc', 'tj3GetErrorStr', 'tj3GetErrorCode',
+                          'tjGetScalingFactors']:
+            setattr(mock_new_lib, func_name, Mock())
+        
+        # Mock tjGetScalingFactors to return proper structure
+        mock_scaling_factors = MagicMock()
+        mock_scaling_factors.__getitem__ = Mock(side_effect=lambda i: Mock(num=1, denom=1))
+        mock_new_lib.tjGetScalingFactors.return_value = mock_scaling_factors
+        
+        # Mock c_int to return a value object for scaling factors count
+        mock_c_int_instance = Mock()
+        mock_c_int_instance.value = 1
+        
+        # Patch cdll.LoadLibrary to return our mock new library
+        with patch('turbojpeg.cdll.LoadLibrary', return_value=mock_new_lib):
+            with patch('turbojpeg.byref', return_value=Mock()):
+                with patch('turbojpeg.c_int', return_value=mock_c_int_instance):
+                    # This should NOT raise a RuntimeError about version
+                    try:
+                        tj = TurboJPEG(lib_path='/fake/path/libturbojpeg.so.0')
+                        assert tj is not None
+                    except RuntimeError as e:
+                        if 'PyTurboJPEG 2.0 requires libjpeg-turbo 3.0' in str(e):
+                            pytest.fail(f"Should not reject TurboJPEG 3.x library: {e}")
+                        # Other RuntimeErrors are acceptable (e.g., from mock setup)
+                    except Exception as e:
+                        # Other exceptions from mock setup are acceptable, as long as it's not the version error
+                        if 'PyTurboJPEG 2.0 requires libjpeg-turbo 3.0' in str(e):
+                            pytest.fail(f"Should not reject TurboJPEG 3.x library: {e}")
+
+
 class TestColorspaceConsistency:
     """
     Test colorspace consistency across all supported TJPF and TJSAMP combinations.

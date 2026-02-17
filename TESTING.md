@@ -115,7 +115,7 @@ Each test class focuses on a specific function or feature:
 
 ### Regression Tests
 - `TestBufferHandlingRobustness` - Invalid buffer handling tests
-- `TestLibraryLoading` - Library loading and error message tests
+- `TestLibraryLoading` - Library loading, version detection, and error message tests
 - `TestColorspaceConsistency` - All pixel format/subsampling combinations
 - `TestMemoryManagement` - Stress testing with 1000+ cycles and memory leak detection
 - `TestCropFunctionality` - Crop function with real input image
