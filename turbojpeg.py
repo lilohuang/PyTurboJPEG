@@ -883,23 +883,18 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
     
-    def encode_16bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0):
+    def encode_16bit(self, img_array, pixel_format=TJPF_BGR, flags=0):
         """Encodes 16-bit numpy array (uint16) to lossless JPEG memory buffer.
         
         **Note:** 16-bit precision requires lossless JPEG compression per the JPEG standard.
-        This method automatically enables lossless mode. The quality and jpeg_subsample
-        parameters are ignored in lossless mode.
+        This method automatically enables lossless mode (4:4:4 subsampling, no lossy compression).
         
         Parameters
         ----------
         img_array : ndarray
             16-bit image data (uint16, values 0-65535)
-        quality : int
-            JPEG quality (1-100) - ignored in lossless mode
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
-        jpeg_subsample : int
-            Chroma subsampling - ignored in lossless mode (automatically 4:4:4)
         flags : int
             Compression flags
             
@@ -915,7 +910,6 @@ class TurboJPEG(object):
             if self.__set(handle, TJPARAM_LOSSLESS, 1) != 0:
                 self.__report_error(handle)
             # In lossless mode, subsampling is automatically set to 4:4:4
-            # and quality parameter is ignored
             if flags & TJFLAG_PROGRESSIVE:
                 if self.__set(handle, TJPARAM_PROGRESSIVE, 1) != 0:
                     self.__report_error(handle)
