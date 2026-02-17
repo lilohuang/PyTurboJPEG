@@ -146,11 +146,18 @@ class TestDecodeHeader:
     
     def test_decode_header_basic(self, jpeg_instance, encoded_sample_jpeg):
         """Test decoding JPEG header returns correct properties."""
+        # Test backward compatible usage (4-tuple)
         width, height, subsample, colorspace = jpeg_instance.decode_header(encoded_sample_jpeg)
         assert width == 100
         assert height == 100
         assert subsample in [TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_GRAY]
         assert colorspace in [TJCS_RGB, TJCS_YCbCr, TJCS_GRAY]
+        
+        # Test new usage with precision (5-tuple)
+        width, height, subsample, colorspace, precision = jpeg_instance.decode_header(encoded_sample_jpeg, return_precision=True)
+        assert width == 100
+        assert height == 100
+        assert precision == 8  # Standard JPEG is 8-bit
     
     def test_decode_header_invalid_data(self, jpeg_instance):
         """Test decode_header with invalid JPEG data raises error."""
@@ -1531,38 +1538,34 @@ class TestHighPrecision:
         assert decoded.shape == sample_16bit_image.shape
     
     def test_12bit_invalid_precision_parameter(self, jpeg_instance, sample_12bit_image):
-        """Test error handling for invalid precision values."""
-        with pytest.raises(ValueError, match='precision must be 8, 12, or 16'):
-            jpeg_instance.encode(sample_12bit_image, precision=10)
-        
-        jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image)
-        with pytest.raises(ValueError, match='precision must be 8, 12, or 16'):
-            jpeg_instance.decode(jpeg_buf, precision=10)
+        """Test error handling for wrong dtype in 12-bit methods."""
+        # Test that encode_12bit requires uint16
+        img_uint8 = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
+        with pytest.raises(ValueError, match='encode_12bit\\(\\) requires uint16 array'):
+            jpeg_instance.encode_12bit(img_uint8)
     
     def test_16bit_invalid_precision_parameter(self, jpeg_instance, sample_16bit_image, supports_16bit):
-        """Test error handling for invalid precision values."""
+        """Test error handling for wrong dtype in 16-bit methods."""
         if not supports_16bit:
             pytest.skip("16-bit precision not supported by this TurboJPEG build")
-        with pytest.raises(ValueError, match='precision must be 8, 12, or 16'):
-            jpeg_instance.encode(sample_16bit_image, precision=24)
-        
-        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image)
-        with pytest.raises(ValueError, match='precision must be 8, 12, or 16'):
-            jpeg_instance.decode(jpeg_buf, precision=0)
+        # Test that encode_16bit requires uint16
+        img_uint8 = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
+        with pytest.raises(ValueError, match='encode_16bit\\(\\) requires uint16 array'):
+            jpeg_instance.encode_16bit(img_uint8)
     
     def test_12bit_wrong_dtype_input(self, jpeg_instance):
         """Test error when uint8 is passed for 12-bit encoding."""
         img_uint8 = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
-        with pytest.raises(ValueError, match='img_array must be uint16 for 12/16-bit precision'):
-            jpeg_instance.encode(img_uint8, precision=12)
+        with pytest.raises(ValueError, match='encode_12bit\\(\\) requires uint16 array'):
+            jpeg_instance.encode_12bit(img_uint8)
     
     def test_16bit_wrong_dtype_input(self, jpeg_instance, supports_16bit):
         """Test error when uint8 is passed for 16-bit encoding."""
         if not supports_16bit:
             pytest.skip("16-bit precision not supported by this TurboJPEG build")
         img_uint8 = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
-        with pytest.raises(ValueError, match='img_array must be uint16 for 12/16-bit precision'):
-            jpeg_instance.encode(img_uint8, precision=16)
+        with pytest.raises(ValueError, match='encode_16bit\\(\\) requires uint16 array'):
+            jpeg_instance.encode_16bit(img_uint8)
     
     def test_mixed_precision_encode_decode(self, jpeg_instance, sample_12bit_image, supports_16bit):
         """Test encoding and decoding at various precision levels."""
@@ -1570,22 +1573,22 @@ class TestHighPrecision:
         jpeg_buf_12 = jpeg_instance.encode_12bit(sample_12bit_image)
         
         # Decode as 12-bit (should work)
-        decoded_12bit = jpeg_instance.decode(jpeg_buf_12, precision=12)
+        decoded_12bit = jpeg_instance.decode_12bit(jpeg_buf_12)
         assert decoded_12bit.dtype == np.uint16
         assert decoded_12bit.shape == sample_12bit_image.shape
         
         # Test 8-bit roundtrip for comparison
         img_8bit = (sample_12bit_image / 16).astype(np.uint8)  # Downscale to 8-bit range
-        jpeg_buf_8 = jpeg_instance.encode(img_8bit, precision=8)
-        decoded_8bit = jpeg_instance.decode(jpeg_buf_8, precision=8)
+        jpeg_buf_8 = jpeg_instance.encode(img_8bit)
+        decoded_8bit = jpeg_instance.decode(jpeg_buf_8)
         assert decoded_8bit.dtype == np.uint8
         assert decoded_8bit.shape == img_8bit.shape
         
         # If 16-bit is supported, test it
         if supports_16bit:
             img_16bit = (sample_12bit_image * 16).astype(np.uint16)  # Upscale to 16-bit range
-            jpeg_buf_16 = jpeg_instance.encode(img_16bit, precision=16, lossless=True)
-            decoded_16bit = jpeg_instance.decode(jpeg_buf_16, precision=16)
+            jpeg_buf_16 = jpeg_instance.encode_16bit(img_16bit)
+            decoded_16bit = jpeg_instance.decode_16bit(jpeg_buf_16)
             assert decoded_16bit.dtype == np.uint16
             assert decoded_16bit.shape == img_16bit.shape
 
@@ -1665,41 +1668,72 @@ class TestHighPrecision:
         assert decoded.dtype == np.uint16
     
     def test_12bit_decode_header(self, jpeg_instance, sample_12bit_image):
-        """Test that decode_header works with 12-bit JPEGs."""
+        """Test that decode_header works with 12-bit JPEGs and returns correct precision."""
         jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image)
+        # Test backward compatible mode
         width, height, subsample, colorspace = jpeg_instance.decode_header(jpeg_buf)
         assert width == sample_12bit_image.shape[1]
         assert height == sample_12bit_image.shape[0]
-        assert subsample >= 0
-        assert colorspace >= 0
+        # Test with precision
+        width, height, subsample, colorspace, precision = jpeg_instance.decode_header(jpeg_buf, return_precision=True)
+        assert precision == 12, "12-bit JPEG should report precision of 12"
     
     def test_16bit_decode_header(self, jpeg_instance, sample_16bit_image, supports_16bit):
-        """Test that decode_header works with 16-bit JPEGs."""
+        """Test that decode_header works with 16-bit JPEGs and returns correct precision."""
         if not supports_16bit:
             pytest.skip("16-bit precision not supported by this TurboJPEG build")
         jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image)
+        # Test backward compatible mode
         width, height, subsample, colorspace = jpeg_instance.decode_header(jpeg_buf)
         assert width == sample_16bit_image.shape[1]
         assert height == sample_16bit_image.shape[0]
-        assert subsample >= 0
-        assert colorspace >= 0
+        # Test with precision
+        width, height, subsample, colorspace, precision = jpeg_instance.decode_header(jpeg_buf, return_precision=True)
+        assert precision == 16, "16-bit JPEG should report precision of 16"
+    
+    def test_decode_header_precision_selection(self, jpeg_instance):
+        """Test using decode_header precision to select appropriate decode function."""
+        # Test 8-bit
+        img_8bit = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
+        jpeg_8bit = jpeg_instance.encode(img_8bit)
+        _, _, _, _, precision = jpeg_instance.decode_header(jpeg_8bit, return_precision=True)
+        assert precision == 8
+        if precision == 8:
+            decoded = jpeg_instance.decode(jpeg_8bit)
+            assert decoded.dtype == np.uint8
+        
+        # Test 12-bit
+        img_12bit = np.random.randint(0, 4096, (50, 50, 3), dtype=np.uint16)
+        jpeg_12bit = jpeg_instance.encode_12bit(img_12bit)
+        _, _, _, _, precision = jpeg_instance.decode_header(jpeg_12bit, return_precision=True)
+        assert precision == 12
+        if precision == 12:
+            decoded = jpeg_instance.decode_12bit(jpeg_12bit)
+            assert decoded.dtype == np.uint16
+        
+        # Test 16-bit (if supported)
+        try:
+            # np.random.randint upper bound is exclusive, so use 65536 to get values 0-65535
+            img_16bit = np.random.randint(0, 65536, (50, 50, 3), dtype=np.uint16)
+            jpeg_16bit = jpeg_instance.encode_16bit(img_16bit)
+            _, _, _, _, precision = jpeg_instance.decode_header(jpeg_16bit, return_precision=True)
+            assert precision == 16
+            if precision == 16:
+                decoded = jpeg_instance.decode_16bit(jpeg_16bit)
+                assert decoded.dtype == np.uint16
+        except (OSError, IOError):
+            # 16-bit not supported by this build
+            pass
 
 
 class TestLosslessJPEG:
     """Tests for lossless JPEG compression across all precision levels."""
     
-    def test_8bit_lossless_roundtrip(self, jpeg_instance):
-        """Test 8-bit lossless encoding provides perfect reconstruction."""
-        img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
-        jpeg_buf = jpeg_instance.encode(img, precision=8, lossless=True)
-        decoded = jpeg_instance.decode(jpeg_buf, precision=8)
-        assert np.array_equal(img, decoded), "8-bit lossless should provide perfect reconstruction"
-    
     def test_12bit_lossless_roundtrip(self, jpeg_instance):
         """Test 12-bit lossless encoding provides perfect reconstruction."""
         img = np.random.randint(0, 4096, (100, 100, 3), dtype=np.uint16)
-        jpeg_buf = jpeg_instance.encode(img, precision=12, lossless=True)
-        decoded = jpeg_instance.decode(jpeg_buf, precision=12)
+        jpeg_buf = jpeg_instance.encode_12bit(img, lossless=True)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf)
         assert np.array_equal(img, decoded), "12-bit lossless should provide perfect reconstruction"
     
     def test_12bit_lossless_convenience_method(self, jpeg_instance):
@@ -1717,23 +1751,23 @@ class TestLosslessJPEG:
         assert np.array_equal(img, decoded), "16-bit lossless should provide perfect reconstruction"
     
     def test_lossless_larger_than_lossy(self, jpeg_instance):
-        """Test that lossless encoding produces larger files than lossy."""
-        img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
-        lossy_buf = jpeg_instance.encode(img, precision=8, quality=95, lossless=False)
-        lossless_buf = jpeg_instance.encode(img, precision=8, lossless=True)
+        """Test that 12-bit lossless encoding produces larger files than lossy."""
+        img = np.random.randint(0, 4096, (100, 100, 3), dtype=np.uint16)
+        lossy_buf = jpeg_instance.encode_12bit(img, quality=95, lossless=False)
+        lossless_buf = jpeg_instance.encode_12bit(img, lossless=True)
         assert len(lossless_buf) > len(lossy_buf), "Lossless should be larger than lossy"
     
-    def test_8bit_lossless_vs_lossy_reconstruction(self, jpeg_instance):
-        """Test that lossless provides perfect reconstruction while lossy does not."""
-        img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
+    def test_12bit_lossless_vs_lossy_reconstruction(self, jpeg_instance):
+        """Test that 12-bit lossless provides perfect reconstruction while lossy does not."""
+        img = np.random.randint(0, 4096, (100, 100, 3), dtype=np.uint16)
         
         # Lossy encoding
-        lossy_buf = jpeg_instance.encode(img, precision=8, quality=95, lossless=False)
-        lossy_decoded = jpeg_instance.decode(lossy_buf, precision=8)
+        lossy_buf = jpeg_instance.encode_12bit(img, quality=95, lossless=False)
+        lossy_decoded = jpeg_instance.decode_12bit(lossy_buf)
         
         # Lossless encoding
-        lossless_buf = jpeg_instance.encode(img, precision=8, lossless=True)
-        lossless_decoded = jpeg_instance.decode(lossless_buf, precision=8)
+        lossless_buf = jpeg_instance.encode_12bit(img, lossless=True)
+        lossless_decoded = jpeg_instance.decode_12bit(lossless_buf)
         
         # Lossless should be perfect, lossy should not (for most random images)
         assert np.array_equal(img, lossless_decoded), "Lossless should provide perfect reconstruction"
