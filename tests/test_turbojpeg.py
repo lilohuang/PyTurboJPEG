@@ -29,8 +29,10 @@ from turbojpeg import (
     TJPF_XBGR, TJPF_XRGB, TJPF_ABGR, TJPF_ARGB,
     TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_GRAY, TJSAMP_440, TJSAMP_411,
     TJCS_RGB, TJCS_YCbCr, TJCS_GRAY,
-    TJFLAG_PROGRESSIVE, TJFLAG_FASTUPSAMPLE, TJFLAG_FASTDCT
+    TJFLAG_PROGRESSIVE, TJFLAG_FASTUPSAMPLE, TJFLAG_FASTDCT,
+    TJPRECISION_8, TJPRECISION_12, TJPRECISION_16
 )
+
 
 
 # Test fixtures
@@ -93,6 +95,30 @@ def valid_jpeg(jpeg_instance, sample_bgr_image):
 def encoded_sample_jpeg(jpeg_instance, sample_bgr_image):
     """Create an encoded JPEG from sample BGR image."""
     return jpeg_instance.encode(sample_bgr_image)
+
+
+@pytest.fixture(scope='module')
+def sample_12bit_image():
+    """Create a sample 12-bit image (uint16 with values 0-4095)."""
+    img = np.zeros((100, 100, 3), dtype=np.uint16)
+    for i in range(100):
+        for j in range(100):
+            img[i, j] = [i * 40, j * 40, (i + j) * 20]
+    # Ensure values are in 12-bit range (0-4095)
+    img = np.clip(img, 0, 4095)
+    return img
+
+
+@pytest.fixture(scope='module')
+def sample_16bit_image():
+    """Create a sample 16-bit image (uint16 with full range 0-65535)."""
+    img = np.zeros((100, 100, 3), dtype=np.uint16)
+    for i in range(100):
+        for j in range(100):
+            img[i, j] = [i * 655, j * 655, (i + j) * 327]
+    # Ensure values are in 16-bit range
+    img = np.clip(img, 0, 65535)
+    return img
 
 
 class TestTurboJPEGInitialization:
@@ -1280,6 +1306,328 @@ class TestCropFunctionality:
         close_pixels = np.sum(diff <= 10, axis=2) == 3  # All 3 channels close
         percentage_close = np.sum(close_pixels) / close_pixels.size
         assert percentage_close > 0.95, f"Only {percentage_close*100:.1f}% of pixels are close"
+
+
+class TestHighPrecision:
+    """Comprehensive tests for 12-bit and 16-bit precision JPEG support."""
+    
+    def test_encode_decode_12bit_basic(self, jpeg_instance, sample_12bit_image):
+        """Test basic 12-bit encode/decode roundtrip."""
+        # Encode 12-bit image
+        jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image)
+        assert isinstance(jpeg_buf, bytes)
+        assert len(jpeg_buf) > 0
+        
+        # Decode back to 12-bit
+        decoded = jpeg_instance.decode_12bit(jpeg_buf)
+        assert decoded.shape == sample_12bit_image.shape
+        assert decoded.dtype == np.uint16
+    
+    def test_encode_decode_16bit_basic(self, jpeg_instance, sample_16bit_image):
+        """Test basic 16-bit encode/decode roundtrip."""
+        # Encode 16-bit image
+        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image)
+        assert isinstance(jpeg_buf, bytes)
+        assert len(jpeg_buf) > 0
+        
+        # Decode back to 16-bit
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
+        assert decoded.shape == sample_16bit_image.shape
+        assert decoded.dtype == np.uint16
+    
+    def test_12bit_image_shape_preservation(self, jpeg_instance, sample_12bit_image):
+        """Test that 12-bit image dimensions are preserved."""
+        jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf)
+        assert decoded.shape == sample_12bit_image.shape
+    
+    def test_16bit_image_shape_preservation(self, jpeg_instance, sample_16bit_image):
+        """Test that 16-bit image dimensions are preserved."""
+        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
+        assert decoded.shape == sample_16bit_image.shape
+    
+    def test_12bit_dtype_verification(self, jpeg_instance, sample_12bit_image):
+        """Test that 12-bit decode returns uint16."""
+        jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf)
+        assert decoded.dtype == np.uint16
+    
+    def test_16bit_dtype_verification(self, jpeg_instance, sample_16bit_image):
+        """Test that 16-bit decode returns uint16."""
+        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
+        assert decoded.dtype == np.uint16
+    
+    def test_12bit_value_range(self, jpeg_instance, sample_12bit_image):
+        """Test that 12-bit values stay within 0-4095 range."""
+        jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf)
+        assert np.all(decoded >= 0)
+        assert np.all(decoded <= 4095)
+    
+    def test_16bit_value_range(self, jpeg_instance, sample_16bit_image):
+        """Test that 16-bit values stay within 0-65535 range."""
+        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
+        assert np.all(decoded >= 0)
+        assert np.all(decoded <= 65535)
+    
+    def test_12bit_quality_levels(self, jpeg_instance, sample_12bit_image):
+        """Test 12-bit encoding with different quality levels."""
+        quality_levels = [50, 75, 85, 95, 100]
+        sizes = []
+        for quality in quality_levels:
+            jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image, quality=quality)
+            sizes.append(len(jpeg_buf))
+            decoded = jpeg_instance.decode_12bit(jpeg_buf)
+            assert decoded.shape == sample_12bit_image.shape
+        
+        # Higher quality should generally produce larger files
+        # (though not strictly monotonic due to compression characteristics)
+        assert sizes[-1] >= sizes[0]  # quality 100 >= quality 50
+    
+    def test_16bit_quality_levels(self, jpeg_instance, sample_16bit_image):
+        """Test 16-bit encoding with different quality levels."""
+        quality_levels = [50, 75, 85, 95, 100]
+        sizes = []
+        for quality in quality_levels:
+            jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image, quality=quality)
+            sizes.append(len(jpeg_buf))
+            decoded = jpeg_instance.decode_16bit(jpeg_buf)
+            assert decoded.shape == sample_16bit_image.shape
+        
+        # Higher quality should generally produce larger files
+        assert sizes[-1] >= sizes[0]  # quality 100 >= quality 50
+    
+    def test_12bit_different_subsampling(self, jpeg_instance, sample_12bit_image):
+        """Test 12-bit with different chroma subsampling."""
+        subsamplings = [TJSAMP_444, TJSAMP_422, TJSAMP_420]
+        for subsample in subsamplings:
+            jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image, jpeg_subsample=subsample)
+            decoded = jpeg_instance.decode_12bit(jpeg_buf)
+            assert decoded.shape == sample_12bit_image.shape
+            assert decoded.dtype == np.uint16
+    
+    def test_16bit_different_subsampling(self, jpeg_instance, sample_16bit_image):
+        """Test 16-bit with different chroma subsampling."""
+        subsamplings = [TJSAMP_444, TJSAMP_422, TJSAMP_420]
+        for subsample in subsamplings:
+            jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image, jpeg_subsample=subsample)
+            decoded = jpeg_instance.decode_16bit(jpeg_buf)
+            assert decoded.shape == sample_16bit_image.shape
+            assert decoded.dtype == np.uint16
+    
+    def test_12bit_different_pixel_formats(self, jpeg_instance):
+        """Test 12-bit with different pixel formats (RGB, BGR, GRAY)."""
+        # RGB
+        img_rgb = np.random.randint(0, 4096, (50, 50, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_12bit(img_rgb, pixel_format=TJPF_RGB)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf, pixel_format=TJPF_RGB)
+        assert decoded.shape == img_rgb.shape
+        
+        # BGR
+        img_bgr = np.random.randint(0, 4096, (50, 50, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_12bit(img_bgr, pixel_format=TJPF_BGR)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf, pixel_format=TJPF_BGR)
+        assert decoded.shape == img_bgr.shape
+        
+        # GRAY
+        img_gray = np.random.randint(0, 4096, (50, 50, 1), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_12bit(img_gray, pixel_format=TJPF_GRAY)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf, pixel_format=TJPF_GRAY)
+        assert decoded.shape == img_gray.shape
+    
+    def test_16bit_different_pixel_formats(self, jpeg_instance):
+        """Test 16-bit with different pixel formats (RGB, BGR, GRAY)."""
+        # RGB
+        img_rgb = np.random.randint(0, 65536, (50, 50, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_16bit(img_rgb, pixel_format=TJPF_RGB)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf, pixel_format=TJPF_RGB)
+        assert decoded.shape == img_rgb.shape
+        
+        # BGR
+        img_bgr = np.random.randint(0, 65536, (50, 50, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_16bit(img_bgr, pixel_format=TJPF_BGR)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf, pixel_format=TJPF_BGR)
+        assert decoded.shape == img_bgr.shape
+        
+        # GRAY
+        img_gray = np.random.randint(0, 65536, (50, 50, 1), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_16bit(img_gray, pixel_format=TJPF_GRAY)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf, pixel_format=TJPF_GRAY)
+        assert decoded.shape == img_gray.shape
+    
+    def test_12bit_grayscale(self, jpeg_instance):
+        """Test single-channel grayscale 12-bit images."""
+        img_gray = np.random.randint(0, 4096, (100, 100, 1), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_12bit(img_gray, pixel_format=TJPF_GRAY, jpeg_subsample=TJSAMP_GRAY)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf, pixel_format=TJPF_GRAY)
+        assert decoded.shape == img_gray.shape
+        assert decoded.dtype == np.uint16
+    
+    def test_16bit_grayscale(self, jpeg_instance):
+        """Test single-channel grayscale 16-bit images."""
+        img_gray = np.random.randint(0, 65536, (100, 100, 1), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_16bit(img_gray, pixel_format=TJPF_GRAY, jpeg_subsample=TJSAMP_GRAY)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf, pixel_format=TJPF_GRAY)
+        assert decoded.shape == img_gray.shape
+        assert decoded.dtype == np.uint16
+    
+    def test_12bit_with_flags(self, jpeg_instance, sample_12bit_image):
+        """Test 12-bit with compression flags (PROGRESSIVE, FASTDCT)."""
+        # Progressive
+        jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image, flags=TJFLAG_PROGRESSIVE)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf)
+        assert decoded.shape == sample_12bit_image.shape
+        
+        # Fast DCT
+        jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image, flags=TJFLAG_FASTDCT)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf, flags=TJFLAG_FASTDCT)
+        assert decoded.shape == sample_12bit_image.shape
+    
+    def test_16bit_with_flags(self, jpeg_instance, sample_16bit_image):
+        """Test 16-bit with compression flags (PROGRESSIVE, FASTDCT)."""
+        # Progressive
+        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image, flags=TJFLAG_PROGRESSIVE)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
+        assert decoded.shape == sample_16bit_image.shape
+        
+        # Fast DCT
+        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image, flags=TJFLAG_FASTDCT)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf, flags=TJFLAG_FASTDCT)
+        assert decoded.shape == sample_16bit_image.shape
+    
+    def test_12bit_invalid_precision_parameter(self, jpeg_instance, sample_12bit_image):
+        """Test error handling for invalid precision values."""
+        with pytest.raises(ValueError, match='precision must be 8, 12, or 16'):
+            jpeg_instance.encode(sample_12bit_image, precision=10)
+        
+        jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image)
+        with pytest.raises(ValueError, match='precision must be 8, 12, or 16'):
+            jpeg_instance.decode(jpeg_buf, precision=10)
+    
+    def test_16bit_invalid_precision_parameter(self, jpeg_instance, sample_16bit_image):
+        """Test error handling for invalid precision values."""
+        with pytest.raises(ValueError, match='precision must be 8, 12, or 16'):
+            jpeg_instance.encode(sample_16bit_image, precision=24)
+        
+        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image)
+        with pytest.raises(ValueError, match='precision must be 8, 12, or 16'):
+            jpeg_instance.decode(jpeg_buf, precision=0)
+    
+    def test_12bit_wrong_dtype_input(self, jpeg_instance):
+        """Test error when uint8 is passed for 12-bit encoding."""
+        img_uint8 = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
+        with pytest.raises(ValueError, match='img_array must be uint16 for 12/16-bit precision'):
+            jpeg_instance.encode(img_uint8, precision=12)
+    
+    def test_16bit_wrong_dtype_input(self, jpeg_instance):
+        """Test error when uint8 is passed for 16-bit encoding."""
+        img_uint8 = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
+        with pytest.raises(ValueError, match='img_array must be uint16 for 12/16-bit precision'):
+            jpeg_instance.encode(img_uint8, precision=16)
+    
+    def test_mixed_precision_encode_decode(self, jpeg_instance, sample_12bit_image):
+        """Test encoding at one precision and decoding at another."""
+        # Encode as 12-bit
+        jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image)
+        
+        # Decode as 8-bit (downconversion)
+        decoded_8bit = jpeg_instance.decode(jpeg_buf, precision=8)
+        assert decoded_8bit.dtype == np.uint8
+        assert decoded_8bit.shape == sample_12bit_image.shape
+        
+        # Decode as 16-bit (upconversion)
+        decoded_16bit = jpeg_instance.decode(jpeg_buf, precision=16)
+        assert decoded_16bit.dtype == np.uint16
+        assert decoded_16bit.shape == sample_12bit_image.shape
+    
+    def test_12bit_memory_continuity(self, jpeg_instance):
+        """Test multiple 12-bit encode/decode cycles (100 iterations)."""
+        img = np.random.randint(0, 4096, (50, 50, 3), dtype=np.uint16)
+        for _ in range(100):
+            jpeg_buf = jpeg_instance.encode_12bit(img)
+            decoded = jpeg_instance.decode_12bit(jpeg_buf)
+            assert decoded.shape == img.shape
+            assert decoded.dtype == np.uint16
+    
+    def test_16bit_memory_continuity(self, jpeg_instance):
+        """Test multiple 16-bit encode/decode cycles (100 iterations)."""
+        img = np.random.randint(0, 65536, (50, 50, 3), dtype=np.uint16)
+        for _ in range(100):
+            jpeg_buf = jpeg_instance.encode_16bit(img)
+            decoded = jpeg_instance.decode_16bit(jpeg_buf)
+            assert decoded.shape == img.shape
+            assert decoded.dtype == np.uint16
+    
+    def test_12bit_edge_values(self, jpeg_instance):
+        """Test 12-bit with min (0) and max (4095) values."""
+        # All zeros
+        img_min = np.zeros((50, 50, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_12bit(img_min)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf)
+        assert decoded.shape == img_min.shape
+        
+        # All max values
+        img_max = np.full((50, 50, 3), 4095, dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_12bit(img_max)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf)
+        assert decoded.shape == img_max.shape
+    
+    def test_16bit_edge_values(self, jpeg_instance):
+        """Test 16-bit with min (0) and max (65535) values."""
+        # All zeros
+        img_min = np.zeros((50, 50, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_16bit(img_min)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
+        assert decoded.shape == img_min.shape
+        
+        # All max values
+        img_max = np.full((50, 50, 3), 65535, dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_16bit(img_max)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
+        assert decoded.shape == img_max.shape
+    
+    def test_convenience_methods_12bit(self, jpeg_instance, sample_12bit_image):
+        """Test encode_12bit() and decode_12bit() convenience methods."""
+        # Test encode_12bit
+        jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image, quality=90)
+        assert isinstance(jpeg_buf, bytes)
+        
+        # Test decode_12bit
+        decoded = jpeg_instance.decode_12bit(jpeg_buf)
+        assert decoded.shape == sample_12bit_image.shape
+        assert decoded.dtype == np.uint16
+    
+    def test_convenience_methods_16bit(self, jpeg_instance, sample_16bit_image):
+        """Test encode_16bit() and decode_16bit() convenience methods."""
+        # Test encode_16bit
+        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image, quality=90)
+        assert isinstance(jpeg_buf, bytes)
+        
+        # Test decode_16bit
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
+        assert decoded.shape == sample_16bit_image.shape
+        assert decoded.dtype == np.uint16
+    
+    def test_12bit_decode_header(self, jpeg_instance, sample_12bit_image):
+        """Test that decode_header works with 12-bit JPEGs."""
+        jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image)
+        width, height, subsample, colorspace = jpeg_instance.decode_header(jpeg_buf)
+        assert width == sample_12bit_image.shape[1]
+        assert height == sample_12bit_image.shape[0]
+        assert subsample >= 0
+        assert colorspace >= 0
+    
+    def test_16bit_decode_header(self, jpeg_instance, sample_16bit_image):
+        """Test that decode_header works with 16-bit JPEGs."""
+        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image)
+        width, height, subsample, colorspace = jpeg_instance.decode_header(jpeg_buf)
+        assert width == sample_16bit_image.shape[1]
+        assert height == sample_16bit_image.shape[0]
+        assert subsample >= 0
+        assert colorspace >= 0
 
 
 if __name__ == '__main__':
