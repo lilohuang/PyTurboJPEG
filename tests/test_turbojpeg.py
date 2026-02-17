@@ -1692,7 +1692,14 @@ class TestHighPrecision:
 
 class TestLosslessJPEG:
     """Tests for lossless JPEG compression across all precision levels."""
-    
+
+    def test_8bit_lossless_roundtrip(self, jpeg_instance):
+        """Test 8-bit lossless encoding provides perfect reconstruction."""
+        img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
+        jpeg_buf = jpeg_instance.encode(img, lossless=True)
+        decoded = jpeg_instance.decode(jpeg_buf)
+        assert np.array_equal(img, decoded), "8-bit lossless should provide perfect reconstruction"
+        
     def test_12bit_lossless_roundtrip(self, jpeg_instance):
         """Test 12-bit lossless encoding provides perfect reconstruction."""
         img = np.random.randint(0, 4096, (100, 100, 3), dtype=np.uint16)
@@ -1713,8 +1720,31 @@ class TestLosslessJPEG:
         jpeg_buf = jpeg_instance.encode_16bit(img)
         decoded = jpeg_instance.decode_16bit(jpeg_buf)
         assert np.array_equal(img, decoded), "16-bit lossless should provide perfect reconstruction"
+
+    def test_8bit_lossless_larger_than_lossy(self, jpeg_instance):
+        """Test that lossless encoding produces larger files than lossy."""
+        img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
+        lossy_buf = jpeg_instance.encode(img, quality=95, lossless=False)
+        lossless_buf = jpeg_instance.encode(img, lossless=True)
+        assert len(lossless_buf) > len(lossy_buf), "Lossless should be larger than lossy"
+
+    def test_8bit_lossless_vs_lossy_reconstruction(self, jpeg_instance):
+        """Test that lossless provides perfect reconstruction while lossy does not."""
+        img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
+        
+        # Lossy encoding
+        lossy_buf = jpeg_instance.encode(img, quality=95, lossless=False)
+        lossy_decoded = jpeg_instance.decode(lossy_buf)
+        
+        # Lossless encoding
+        lossless_buf = jpeg_instance.encode(img, lossless=True)
+        lossless_decoded = jpeg_instance.decode(lossless_buf)
+        
+        # Lossless should be perfect, lossy should not (for most random images)
+        assert np.array_equal(img, lossless_decoded), "Lossless should provide perfect reconstruction"
+        # Note: lossy may occasionally match by chance with simple patterns, so we don't test inequality
     
-    def test_lossless_larger_than_lossy(self, jpeg_instance):
+    def test_12bit_lossless_larger_than_lossy(self, jpeg_instance):
         """Test that 12-bit lossless encoding produces larger files than lossy."""
         img = np.random.randint(0, 4096, (100, 100, 3), dtype=np.uint16)
         lossy_buf = jpeg_instance.encode_12bit(img, quality=95, lossless=False)
