@@ -268,33 +268,13 @@ with open('output_16bit_lossless.jpg', 'rb') as f:
     decoded_from_file = jpeg.decode_16bit(f.read())
 ```
 
-### Lossless JPEG for All Precisions
+### Lossless JPEG for 12-bit and 16-bit
 
-All precision levels (8-bit, 12-bit, 16-bit) support lossless compression for perfect reconstruction:
-
-#### 8-bit Lossless JPEG
-```python
-import numpy as np
-from turbojpeg import TurboJPEG
-
-jpeg = TurboJPEG()
-
-# Create 8-bit image
-img_8bit = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
-
-# Encode to 8-bit lossless JPEG
-jpeg_data = jpeg.encode(img_8bit, precision=8, lossless=True)
-
-# Decode
-decoded_img = jpeg.decode(jpeg_data, precision=8)
-
-# Perfect reconstruction
-assert np.array_equal(img_8bit, decoded_img)  # True
-```
+12-bit and 16-bit JPEG support lossless compression for perfect reconstruction:
 
 #### 12-bit Lossless JPEG
 
-12-bit precision with lossless compression can be achieved in two ways:
+12-bit precision with lossless compression:
 
 ```python
 import numpy as np
@@ -305,14 +285,11 @@ jpeg = TurboJPEG()
 # Create 12-bit image
 img_12bit = np.random.randint(0, 4096, (480, 640, 3), dtype=np.uint16)
 
-# Method 1: Using encode() with lossless=True
-jpeg_data = jpeg.encode(img_12bit, precision=12, lossless=True)
-
-# Method 2: Using encode_12bit() with lossless=True
+# Encode to 12-bit lossless JPEG using encode_12bit() with lossless=True
 jpeg_data = jpeg.encode_12bit(img_12bit, lossless=True)
 
-# Decode
-decoded_img = jpeg.decode(jpeg_data, precision=12)
+# Decode using decode_12bit()
+decoded_img = jpeg.decode_12bit(jpeg_data)
 
 # Perfect reconstruction
 assert np.array_equal(img_12bit, decoded_img)  # True
