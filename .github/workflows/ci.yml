@@ -8,17 +8,22 @@ on:
 
 jobs:
   test:
-    name: Test with libjpeg-turbo 3.1.3
+    # Dynamically display the environment in the job list
+    name: Test (Py ${{ matrix.python-version }}, turbo ${{ matrix.libjpeg-version }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    
     strategy:
       fail-fast: false
       matrix:
+        # Define the test matrix for cross-version compatibility
         python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
+        libjpeg-version: ['3.0.0', '3.1.0', '3.1.3']
     
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
     
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
@@ -31,14 +36,16 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y cmake nasm
     
-    - name: Install libjpeg-turbo 3.1.3 from source
+    - name: Download and install libjpeg-turbo ${{ matrix.libjpeg-version }}
       run: |
         cd /tmp
-        wget -q https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-3.1.3.tar.gz
-        tar -xzf libjpeg-turbo-3.1.3.tar.gz
-        cd libjpeg-turbo-3.1.3
+        # Use matrix variable to fetch the specific version
+        wget -q https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${{ matrix.libjpeg-version }}/libjpeg-turbo-${{ matrix.libjpeg-version }}.tar.gz
+        tar -xzf libjpeg-turbo-${{ matrix.libjpeg-version }}.tar.gz
+        cd libjpeg-turbo-${{ matrix.libjpeg-version }}
         mkdir build
         cd build
+        # Standard CMake build and system-wide installation
         cmake -DCMAKE_INSTALL_PREFIX=/usr/local ..
         make -j$(nproc)
         sudo make install
@@ -49,6 +56,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install numpy pytest pytest-memray
     
-    - name: Run tests
+    - name: Run test suite
       run: |
         pytest tests/ -v
