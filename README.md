@@ -1,146 +1,176 @@
 # PyTurboJPEG
-A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image.
+
+A Python wrapper for libjpeg-turbo that enables efficient JPEG image decoding and encoding.
 
 ## Prerequisites
+
 - [libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo/releases) **3.0 or later** (required for PyTurboJPEG 2.0+)
 - [numpy](https://github.com/numpy/numpy)
 
-**Important**: PyTurboJPEG 2.0+ requires libjpeg-turbo 3.0 or later as it uses the new function-based TurboJPEG 3 API. If you need to use libjpeg-turbo 2.x, please use PyTurboJPEG 1.x instead.
+**Important:** PyTurboJPEG 2.0+ requires libjpeg-turbo 3.0 or later as it uses the new function-based TurboJPEG 3 API. For libjpeg-turbo 2.x compatibility, please use PyTurboJPEG 1.x.
 
-## Example
+## Installation
+
+### macOS
+```bash
+brew install jpeg-turbo
+pip install -U git+https://github.com/lilohuang/PyTurboJPEG.git
+```
+
+### Windows
+1. Download the [libjpeg-turbo official installer](https://github.com/libjpeg-turbo/libjpeg-turbo/releases)
+2. Install PyTurboJPEG:
+   ```bash
+   pip install -U git+https://github.com/lilohuang/PyTurboJPEG.git
+   ```
+
+### Linux
+1. Download the [libjpeg-turbo official installer](https://github.com/libjpeg-turbo/libjpeg-turbo/releases)
+2. Install PyTurboJPEG:
+   ```bash
+   pip install -U git+https://github.com/lilohuang/PyTurboJPEG.git
+   ```
+
+## Basic Usage
+
+### Initialization
+
+```python
+from turbojpeg import TurboJPEG
+
+# Use default library installation
+jpeg = TurboJPEG()
+
+# Or specify library path explicitly
+# jpeg = TurboJPEG(r'D:\turbojpeg.dll')  # Windows
+# jpeg = TurboJPEG('/usr/lib64/libturbojpeg.so')  # Linux
+# jpeg = TurboJPEG('/usr/local/lib/libturbojpeg.dylib')  # macOS
+```
+
+### Decoding
 
 ```python
 import cv2
-from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY, TJFLAG_PROGRESSIVE, TJFLAG_FASTUPSAMPLE, TJFLAG_FASTDCT
+from turbojpeg import TurboJPEG, TJPF_GRAY, TJFLAG_FASTUPSAMPLE, TJFLAG_FASTDCT
 
-# specifying library path explicitly
-# jpeg = TurboJPEG(r'D:\turbojpeg.dll')
-# jpeg = TurboJPEG('/usr/lib64/libturbojpeg.so')
-# jpeg = TurboJPEG('/usr/local/lib/libturbojpeg.dylib')
-
-# using default library installation
 jpeg = TurboJPEG()
 
-# decoding input.jpg to BGR array
-in_file = open('input.jpg', 'rb')
-bgr_array = jpeg.decode(in_file.read())
-in_file.close()
+# Basic decoding to BGR array
+with open('input.jpg', 'rb') as f:
+    bgr_array = jpeg.decode(f.read())
 cv2.imshow('bgr_array', bgr_array)
 cv2.waitKey(0)
 
-# decoding input.jpg to BGR array with fast upsample and fast DCT. (i.e. fastest speed but lower accuracy)
-in_file = open('input.jpg', 'rb')
-bgr_array = jpeg.decode(in_file.read(), flags=TJFLAG_FASTUPSAMPLE|TJFLAG_FASTDCT)
-in_file.close()
-cv2.imshow('bgr_array', bgr_array)
-cv2.waitKey(0)
+# Fast decoding (lower accuracy, higher speed)
+with open('input.jpg', 'rb') as f:
+    bgr_array = jpeg.decode(f.read(), flags=TJFLAG_FASTUPSAMPLE|TJFLAG_FASTDCT)
 
-# direct rescaling 1/2 while decoding input.jpg to BGR array
-in_file = open('input.jpg', 'rb')
-bgr_array_half = jpeg.decode(in_file.read(), scaling_factor=(1, 2))
-in_file.close()
-cv2.imshow('bgr_array_half', bgr_array_half)
-cv2.waitKey(0)
+# Decode with direct rescaling (1/2 size)
+with open('input.jpg', 'rb') as f:
+    bgr_array_half = jpeg.decode(f.read(), scaling_factor=(1, 2))
 
-# getting possible scaling factors for direct rescaling
+# Get available scaling factors
 scaling_factors = jpeg.scaling_factors
 
-# decoding JPEG image properties
-in_file = open('input.jpg', 'rb')
-width, height, jpeg_subsample, jpeg_colorspace = jpeg.decode_header(in_file.read())
-in_file.close()
-
-# decoding input.jpg to YUV array
-in_file = open('input.jpg', 'rb')
-buffer_array, plane_sizes = jpeg.decode_to_yuv(in_file.read())
-in_file.close()
-
-# decoding input.jpg to YUV planes
-in_file = open('input.jpg', 'rb')
-planes = jpeg.decode_to_yuv_planes(in_file.read())
-in_file.close()
-
-# encoding BGR array to output.jpg with default settings.
-out_file = open('output.jpg', 'wb')
-out_file.write(jpeg.encode(bgr_array))
-out_file.close()
-
-# encoding BGR array to output.jpg with TJSAMP_GRAY subsample.
-out_file = open('output_gray.jpg', 'wb')
-out_file.write(jpeg.encode(bgr_array, jpeg_subsample=TJSAMP_GRAY))
-out_file.close()
-
-# encoding BGR array to output.jpg with quality level 50. 
-out_file = open('output_quality_50.jpg', 'wb')
-out_file.write(jpeg.encode(bgr_array, quality=50))
-out_file.close()
-
-# encoding BGR array to output.jpg with quality level 100 and progressive entropy coding.
-out_file = open('output_quality_100_progressive.jpg', 'wb')
-out_file.write(jpeg.encode(bgr_array, quality=100, flags=TJFLAG_PROGRESSIVE))
-out_file.close()
-
-# decoding input.jpg to grayscale array
-in_file = open('input.jpg', 'rb')
-gray_array = jpeg.decode(in_file.read(), pixel_format=TJPF_GRAY)
-in_file.close()
-cv2.imshow('gray_array', gray_array)
-cv2.waitKey(0)
-
-# scale with quality but leaves out the color conversion step
-in_file = open('input.jpg', 'rb')
-out_file = open('scaled_output.jpg', 'wb')
-out_file.write(jpeg.scale_with_quality(in_file.read(), scaling_factor=(1, 4), quality=70))
-out_file.close()
-in_file.close()
-
-# lossless crop image
-out_file = open('lossless_cropped_output.jpg', 'wb')
-out_file.write(jpeg.crop(open('input.jpg', 'rb').read(), 8, 8, 320, 240))
-out_file.close()
-
-# in-place decoding input.jpg to BGR array
-# here I use a 640x480 example (in practise, read the dimensions)
-in_file = open('input.jpg', 'rb')
-img_array = np.empty((640, 480, 3), dtype=np.uint8)
-result = jpeg.decode(in_file.read(), dst=img_array)
-in_file.close()
-
-# return value is the img_array argument value
-id(result) == id(img_array)
-# True
-
-# Optional: display the in-place array
-# cv2.imshow('img_array', img_array)
-# cv2.waitKey(0)
-
-# in-place encoding with default settings.
-buffer_size = jpeg.buffer_size(img_array)
-dest_buf = bytearray(buffer_size)
-result, n_byte = jpeg.encode(img_array, dst=dest_buf)
-
-# return value is the dest_buf argument value
-id(result) == id(dest_buf)
-
-out_file = open('output.jpg', 'wb')
-out_file.write(dest_buf[:n_byte])
-out_file.close()
+# Decode to grayscale
+with open('input.jpg', 'rb') as f:
+    gray_array = jpeg.decode(f.read(), pixel_format=TJPF_GRAY)
 ```
 
-```python
-# using PyTurboJPEG with ExifRead to transpose an image if the image has an EXIF Orientation tag.
-#
-# pip install PyTurboJPEG -U
-# pip install exifread -U
+### Decoding Header Information
 
+```python
+# Get image properties without full decoding
+with open('input.jpg', 'rb') as f:
+    width, height, jpeg_subsample, jpeg_colorspace = jpeg.decode_header(f.read())
+```
+
+### YUV Decoding
+
+```python
+# Decode to YUV buffer
+with open('input.jpg', 'rb') as f:
+    buffer_array, plane_sizes = jpeg.decode_to_yuv(f.read())
+
+# Decode to YUV planes
+with open('input.jpg', 'rb') as f:
+    planes = jpeg.decode_to_yuv_planes(f.read())
+```
+
+### Encoding
+
+```python
+from turbojpeg import TJSAMP_GRAY, TJFLAG_PROGRESSIVE
+
+# Basic encoding with default settings
+with open('output.jpg', 'wb') as f:
+    f.write(jpeg.encode(bgr_array))
+
+# Encode with grayscale subsample
+with open('output_gray.jpg', 'wb') as f:
+    f.write(jpeg.encode(bgr_array, jpeg_subsample=TJSAMP_GRAY))
+
+# Encode with custom quality
+with open('output_quality_50.jpg', 'wb') as f:
+    f.write(jpeg.encode(bgr_array, quality=50))
+
+# Encode with progressive entropy coding
+with open('output_progressive.jpg', 'wb') as f:
+    f.write(jpeg.encode(bgr_array, quality=100, flags=TJFLAG_PROGRESSIVE))
+```
+
+### Advanced Operations
+
+```python
+# Scale with quality (without color conversion)
+with open('input.jpg', 'rb') as f:
+    scaled_data = jpeg.scale_with_quality(f.read(), scaling_factor=(1, 4), quality=70)
+with open('scaled_output.jpg', 'wb') as f:
+    f.write(scaled_data)
+
+# Lossless crop
+with open('input.jpg', 'rb') as f:
+    cropped_data = jpeg.crop(f.read(), 8, 8, 320, 240)
+with open('cropped_output.jpg', 'wb') as f:
+    f.write(cropped_data)
+```
+
+### In-Place Operations
+
+```python
+import numpy as np
+
+# In-place decoding (reuse existing array)
+img_array = np.empty((640, 480, 3), dtype=np.uint8)
+with open('input.jpg', 'rb') as f:
+    result = jpeg.decode(f.read(), dst=img_array)
+# result is the same as img_array: id(result) == id(img_array)
+
+# In-place encoding (reuse existing buffer)
+buffer_size = jpeg.buffer_size(img_array)
+dest_buf = bytearray(buffer_size)
+result, n_bytes = jpeg.encode(img_array, dst=dest_buf)
+with open('output.jpg', 'wb') as f:
+    f.write(dest_buf[:n_bytes])
+# result is the same as dest_buf: id(result) == id(dest_buf)
+```
+
+### EXIF Orientation Handling
+
+```python
 import cv2
 import numpy as np
 import exifread
 from turbojpeg import TurboJPEG
 
-def transposeImage(image, orientation):
-    """See Orientation in https://www.exif.org/Exif2-2.PDF for details."""
-    if orientation == None: return image
+def transpose_image(image, orientation):
+    """Transpose image based on EXIF Orientation tag.
+    
+    See: https://www.exif.org/Exif2-2.PDF
+    """
+    if orientation is None:
+        return image
+    
     val = orientation.values[0]
     if val == 1: return image
     elif val == 2: return np.fliplr(image)
@@ -151,32 +181,32 @@ def transposeImage(image, orientation):
     elif val == 7: return np.rot90(np.flipud(image))
     elif val == 8: return np.rot90(image)
 
-# using default library installation
-turbo_jpeg = TurboJPEG()
-# open jpeg file
-in_file = open('foobar.jpg', 'rb')
-# parse orientation
-orientation = exifread.process_file(in_file).get('Image Orientation', None)
-# seek file position back to 0 before decoding JPEG image
-in_file.seek(0)
-# start to decode the JPEG file
-image = turbo_jpeg.decode(in_file.read())
-# transpose image based on EXIF Orientation tag
-transposed_image = transposeImage(image, orientation)
-# close the file since it's no longer needed.
-in_file.close()
+jpeg = TurboJPEG()
+
+with open('foobar.jpg', 'rb') as f:
+    # Parse EXIF orientation
+    orientation = exifread.process_file(f).get('Image Orientation', None)
+    
+    # Decode image
+    f.seek(0)
+    image = jpeg.decode(f.read())
+    
+    # Apply orientation transformation
+    transposed_image = transpose_image(image, orientation)
 
 cv2.imshow('transposed_image', transposed_image)
 cv2.waitKey(0)
 ```
 
-## High-Precision JPEG Support (12-bit and 16-bit)
+## High-Precision JPEG Support
 
-PyTurboJPEG 2.0+ supports 12-bit and 16-bit precision JPEG encoding and decoding using TurboJPEG 3.0+ APIs. This is useful for medical imaging, scientific photography, and other applications requiring higher bit depth.
+PyTurboJPEG 2.0+ supports 12-bit and 16-bit precision JPEG encoding and decoding using TurboJPEG 3.0+ APIs. This feature is ideal for medical imaging, scientific photography, and other applications requiring higher bit depth.
 
-**Note**: 12-bit support is available in standard TurboJPEG 3.0+ builds. 16-bit support requires a special build with `-DWITH_12BIT=1 -DWITH_16BIT=1` flags.
+**Requirements:**
+- **12-bit support:** Available in standard TurboJPEG 3.0+ builds
+- **16-bit support:** Requires a custom TurboJPEG build with `-DWITH_12BIT=1 -DWITH_16BIT=1` flags
 
-### Basic 12-bit Encoding and Decoding
+### 12-bit JPEG
 
 ```python
 import numpy as np
@@ -184,25 +214,25 @@ from turbojpeg import TurboJPEG
 
 jpeg = TurboJPEG()
 
-# Create a 12-bit image (uint16 array with values 0-4095)
+# Create 12-bit image (values range from 0 to 4095)
 img_12bit = np.random.randint(0, 4096, (480, 640, 3), dtype=np.uint16)
 
-# Encode 12-bit image to JPEG
-jpeg_buf = jpeg.encode_12bit(img_12bit, quality=95)
+# Encode to 12-bit JPEG
+jpeg_data = jpeg.encode_12bit(img_12bit, quality=95)
 
-# Decode JPEG back to 12-bit image
-decoded_12bit = jpeg.decode_12bit(jpeg_buf)
+# Decode from 12-bit JPEG
+decoded_img = jpeg.decode_12bit(jpeg_data)
 
 # Save to file
 with open('output_12bit.jpg', 'wb') as f:
-    f.write(jpeg_buf)
+    f.write(jpeg_data)
 
-# Load and decode from file
+# Load from file
 with open('output_12bit.jpg', 'rb') as f:
     decoded_from_file = jpeg.decode_12bit(f.read())
 ```
 
-### Basic 16-bit Encoding and Decoding
+### 16-bit JPEG
 
 ```python
 import numpy as np
@@ -210,25 +240,25 @@ from turbojpeg import TurboJPEG
 
 jpeg = TurboJPEG()
 
-# Create a 16-bit image (uint16 array with full range 0-65535)
+# Create 16-bit image (values range from 0 to 65535)
 img_16bit = np.random.randint(0, 65536, (480, 640, 3), dtype=np.uint16)
 
-# Encode 16-bit image to JPEG
-jpeg_buf = jpeg.encode_16bit(img_16bit, quality=95)
+# Encode to 16-bit JPEG
+jpeg_data = jpeg.encode_16bit(img_16bit, quality=95)
 
-# Decode JPEG back to 16-bit image
-decoded_16bit = jpeg.decode_16bit(jpeg_buf)
+# Decode from 16-bit JPEG
+decoded_img = jpeg.decode_16bit(jpeg_data)
 
 # Save to file
 with open('output_16bit.jpg', 'wb') as f:
-    f.write(jpeg_buf)
+    f.write(jpeg_data)
 
-# Load and decode from file
+# Load from file
 with open('output_16bit.jpg', 'rb') as f:
     decoded_from_file = jpeg.decode_16bit(f.read())
 ```
 
-### Working with Medical or Scientific Images
+### Medical and Scientific Imaging
 
 ```python
 import numpy as np
@@ -236,37 +266,26 @@ from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY
 
 jpeg = TurboJPEG()
 
-# Simulate a 12-bit medical image (e.g., from DICOM)
-# Values typically range from 0 to 4095 in medical imaging
-medical_image = np.random.randint(0, 4096, (512, 512, 1), dtype=np.uint16)
+# Create 12-bit medical image (e.g., DICOM format)
+# Medical images typically use 0-4095 range
+medical_img = np.random.randint(0, 4096, (512, 512, 1), dtype=np.uint16)
 
-# Encode with lossless-like quality settings
+# Encode with highest quality for medical applications
 jpeg_medical = jpeg.encode_12bit(
-    medical_image,
+    medical_img,
     pixel_format=TJPF_GRAY,
     jpeg_subsample=TJSAMP_GRAY,
-    quality=100  # Highest quality for medical images
+    quality=100
 )
 
 # Decode for analysis
 decoded_medical = jpeg.decode_12bit(jpeg_medical, pixel_format=TJPF_GRAY)
 
-# Verify value ranges are preserved
-print(f"Original range: [{medical_image.min()}, {medical_image.max()}]")
+# Verify value range preservation
+print(f"Original range: [{medical_img.min()}, {medical_img.max()}]")
 print(f"Decoded range: [{decoded_medical.min()}, {decoded_medical.max()}]")
 ```
 
-## Installation
+## License
 
-### macOS
-- brew install jpeg-turbo
-- pip install -U git+https://github.com/lilohuang/PyTurboJPEG.git
-
-### Windows 
-- Download [libjpeg-turbo official installer](https://github.com/libjpeg-turbo/libjpeg-turbo/releases) 
-- pip install -U git+https://github.com/lilohuang/PyTurboJPEG.git
-
-### Linux
-- Download [libjpeg-turbo official installer](https://github.com/libjpeg-turbo/libjpeg-turbo/releases) 
-- pip install -U git+https://github.com/lilohuang/PyTurboJPEG.git
-
+See the LICENSE file for details.
