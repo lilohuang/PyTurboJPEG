@@ -343,10 +343,9 @@ class TurboJPEG(object):
                 'PyTurboJPEG 2.0 requires libjpeg-turbo 3.0 or later.\n'
                 'The loaded library appears to be libjpeg-turbo 2.x or older.\n'
                 '\n'
-                'Please upgrade your libjpeg-turbo installation:\n'
-                '  - Ubuntu/Debian: sudo apt-get install libturbojpeg0-dev\n'
-                '  - macOS: brew upgrade jpeg-turbo\n'
-                '  - Windows: Download from https://github.com/libjpeg-turbo/libjpeg-turbo/releases\n'
+                'Please upgrade your libjpeg-turbo installation to version 3.0 or later.\n'
+                'Download the appropriate binary for your system from:\n'
+                'https://github.com/libjpeg-turbo/libjpeg-turbo/releases\n'
                 '\n'
                 'Alternatively, use PyTurboJPEG 1.x for libjpeg-turbo 2.x compatibility.')
         
