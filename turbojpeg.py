@@ -885,7 +885,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
     
-    def encode_12bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0):
+    def encode_12bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, lossless=False):
         """Encodes 12-bit numpy array (uint16) to JPEG memory buffer.
         
         Parameters
@@ -893,21 +893,24 @@ class TurboJPEG(object):
         img_array : ndarray
             12-bit image data (uint16, values 0-4095)
         quality : int
-            JPEG quality (1-100)
+            JPEG quality (1-100) - ignored if lossless=True
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         jpeg_subsample : int
-            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.)
+            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.) - ignored if lossless=True
         flags : int
             Compression flags
+        lossless : bool
+            Enable lossless JPEG compression (default: False)
+            When True, provides perfect reconstruction with larger file sizes
             
         Returns
         -------
         bytes
-            JPEG image data
+            JPEG image data (lossy or lossless depending on lossless parameter)
         """
         return self.encode(img_array, quality=quality, pixel_format=pixel_format, 
-                          jpeg_subsample=jpeg_subsample, flags=flags, precision=12)
+                          jpeg_subsample=jpeg_subsample, flags=flags, precision=12, lossless=lossless)
     
     def encode_16bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0):
         """Encodes 16-bit numpy array (uint16) to lossless JPEG memory buffer.
