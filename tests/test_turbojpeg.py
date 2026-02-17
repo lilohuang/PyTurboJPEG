@@ -725,7 +725,7 @@ class TestBufferHandlingRobustness:
         
         # Should either raise an error or return zeros/empty values
         try:
-            width, height, subsample, colorspace, precision = jpeg_instance.decode_header(truncated)
+            width, height, subsample, colorspace = jpeg_instance.decode_header(truncated)
             # If it doesn't raise, should return zeros, minimal values, or -1 (TJ 3.0+)
             assert width == 0 or height == 0 or width == -1 or height == -1
         except (RuntimeError, OSError, IOError):
@@ -1095,7 +1095,7 @@ class TestMemoryManagement:
         """Test decode_header repeatedly for memory stability."""
         # Perform 1000 decode_header operations
         for i in range(1000):
-            width, height, subsample, colorspace, precision = jpeg_instance.decode_header(valid_jpeg)
+            width, height, subsample, colorspace = jpeg_instance.decode_header(valid_jpeg)
             assert width == 100
             assert height == 100
             assert subsample in [TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_GRAY]
