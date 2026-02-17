@@ -10,6 +10,10 @@ This also includes regression tests for:
 3. Colorspace Consistency (all TJPF/TJSAMP combinations)
 4. Memory Management (stress testing with 1000+ cycles)
 5. Crop Functionality (with real input image)
+
+Note: These tests require TurboJPEG 3.0+ as PyTurboJPEG 2.0+ uses the new
+function-based TurboJPEG 3 API. Some tests account for differences in error
+messages and DCT implementation compared to TurboJPEG 2.x.
 """
 import pytest
 import numpy as np
@@ -619,13 +623,15 @@ class TestBufferHandlingRobustness:
         truncated_header = b'\xFF\xD8'
         
         # Should either raise an error or return empty array with warning
+        # TurboJPEG 3.0+ may raise ValueError for negative dimensions or emit warning
         try:
-            with pytest.warns(UserWarning, match="JPEG datastream"):
+            with pytest.warns(UserWarning, match="(JPEG datastream|Premature end of JPEG file)"):
                 result = jpeg_instance.decode(truncated_header)
                 # If it doesn't raise, should return empty or minimal array
                 assert result.size == 0 or result.shape[0] == 0 or result.shape[1] == 0
-        except (RuntimeError, OSError):
+        except (RuntimeError, OSError, IOError, ValueError):
             # This is also acceptable - raising an error for invalid data
+            # TurboJPEG 3.0+ may raise ValueError for negative dimensions
             pass
     
     def test_decode_truncated_jpeg_header_partial(self, jpeg_instance):
@@ -638,8 +644,9 @@ class TestBufferHandlingRobustness:
             result = jpeg_instance.decode(truncated_header)
             # If it doesn't raise, should return empty or minimal array
             assert result.size == 0 or result.shape[0] == 0 or result.shape[1] == 0
-        except (RuntimeError, OSError):
+        except (RuntimeError, OSError, IOError, ValueError):
             # This is also acceptable - raising an error for invalid data
+            # TurboJPEG 3.0+ may raise ValueError for negative dimensions
             pass
     
     def test_decode_truncated_jpeg_data(self, jpeg_instance, valid_jpeg):
@@ -652,8 +659,9 @@ class TestBufferHandlingRobustness:
             result = jpeg_instance.decode(truncated_jpeg)
             # If it doesn't raise, should return empty or minimal array
             assert result.size == 0 or result.shape[0] == 0 or result.shape[1] == 0
-        except (RuntimeError, OSError):
+        except (RuntimeError, OSError, IOError, ValueError):
             # This is also acceptable - raising an error for invalid data
+            # TurboJPEG 3.0+ may raise ValueError for negative dimensions
             pass
     
     def test_decode_invalid_jpeg_magic_number(self, jpeg_instance):
@@ -684,9 +692,9 @@ class TestBufferHandlingRobustness:
         # Should either raise an error or return zeros/empty values
         try:
             width, height, subsample, colorspace = jpeg_instance.decode_header(truncated)
-            # If it doesn't raise, should return zeros or minimal values
-            assert width == 0 or height == 0
-        except (RuntimeError, OSError):
+            # If it doesn't raise, should return zeros, minimal values, or -1 (TJ 3.0+)
+            assert width == 0 or height == 0 or width == -1 or height == -1
+        except (RuntimeError, OSError, IOError):
             # This is also acceptable - raising an error for invalid data
             pass
     
@@ -762,6 +770,79 @@ class TestLibraryLoading:
             assert tj is not None
         else:
             pytest.skip("Could not find turbojpeg library path")
+    
+    def test_version_detection_rejects_old_library(self):
+        """Test that PyTurboJPEG 2.0 rejects TurboJPEG 2.x library with clear error."""
+        from unittest.mock import Mock, patch
+        from ctypes import CDLL
+        
+        # Create a mock library that simulates TurboJPEG 2.x (missing tj3Init)
+        mock_old_lib = Mock(spec=CDLL)
+        
+        # Add TurboJPEG 2.x functions but NOT tj3Init
+        mock_old_lib.tjInitDecompress = Mock()
+        mock_old_lib.tjInitCompress = Mock()
+        mock_old_lib.tjDestroy = Mock()
+        mock_old_lib.tjGetScalingFactors = Mock(return_value=Mock())
+        
+        # Patch cdll.LoadLibrary to return our mock old library
+        with patch('turbojpeg.cdll.LoadLibrary', return_value=mock_old_lib):
+            with pytest.raises(RuntimeError) as excinfo:
+                TurboJPEG(lib_path='/fake/path/libturbojpeg.so')
+            
+            # Verify error message is clear and actionable
+            error_msg = str(excinfo.value)
+            assert 'PyTurboJPEG 2.0 requires libjpeg-turbo 3.0 or later' in error_msg
+            assert 'libjpeg-turbo 2.x or older' in error_msg
+            assert 'upgrade' in error_msg.lower() or 'install' in error_msg.lower()
+            # Should suggest using PyTurboJPEG 1.x as alternative
+            assert 'PyTurboJPEG 1.x' in error_msg or '1.x' in error_msg
+
+    def test_version_detection_accepts_new_library(self):
+        """Test that PyTurboJPEG 2.0 accepts TurboJPEG 3.x library."""
+        from unittest.mock import Mock, patch, MagicMock
+        from ctypes import CDLL, c_int, c_void_p, c_size_t, c_ubyte, POINTER
+        
+        # Create a mock library that simulates TurboJPEG 3.x (has tj3Init)
+        mock_new_lib = Mock(spec=CDLL)
+        
+        # Add all required TurboJPEG 3.x functions
+        for func_name in ['tj3Init', 'tj3Destroy', 'tj3Set', 'tj3Get', 
+                          'tj3SetScalingFactor', 'tj3JPEGBufSize', 'tj3YUVBufSize',
+                          'tj3YUVPlaneWidth', 'tj3YUVPlaneHeight', 'tj3DecompressHeader',
+                          'tj3Decompress8', 'tj3DecompressToYUV8', 'tj3DecompressToYUVPlanes8',
+                          'tj3Compress8', 'tj3CompressFromYUV8', 'tj3Transform',
+                          'tj3Free', 'tj3Alloc', 'tj3GetErrorStr', 'tj3GetErrorCode',
+                          'tjGetScalingFactors']:
+            setattr(mock_new_lib, func_name, Mock())
+        
+        # Mock tjGetScalingFactors to return proper structure
+        mock_scaling_factors = MagicMock()
+        mock_scaling_factors.__getitem__ = Mock(side_effect=lambda i: Mock(num=1, denom=1))
+        mock_new_lib.tjGetScalingFactors.return_value = mock_scaling_factors
+        
+        # Mock c_int to return a value object for scaling factors count
+        mock_c_int_instance = Mock()
+        mock_c_int_instance.value = 1
+        
+        # Patch cdll.LoadLibrary to return our mock new library
+        with patch('turbojpeg.cdll.LoadLibrary', return_value=mock_new_lib):
+            with patch('turbojpeg.byref', return_value=Mock()):
+                with patch('turbojpeg.c_int', return_value=mock_c_int_instance):
+                    # This should NOT raise a RuntimeError about version
+                    try:
+                        tj = TurboJPEG(lib_path='/fake/path/libturbojpeg.so.0')
+                        assert tj is not None
+                    except RuntimeError as e:
+                        if 'PyTurboJPEG 2.0 requires libjpeg-turbo 3.0' in str(e):
+                            pytest.fail(f"Should not reject TurboJPEG 3.x library: {e}")
+                        # Other RuntimeErrors are acceptable (e.g., from mock setup)
+                    except Exception as e:
+                        # Other exceptions from mock setup are acceptable, as long as it's not the version error
+                        if 'PyTurboJPEG 2.0 requires libjpeg-turbo 3.0' in str(e):
+                            pytest.fail(f"Should not reject TurboJPEG 3.x library: {e}")
+
+
 class TestColorspaceConsistency:
     """
     Test colorspace consistency across all supported TJPF and TJSAMP combinations.

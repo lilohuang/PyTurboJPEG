@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '1.8.4'
+__version__ = '2.0.0'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -37,11 +37,13 @@ from struct import unpack, calcsize
 # default libTurboJPEG library path
 DEFAULT_LIB_PATHS = {
     'Darwin': [
+        '/usr/local/lib/libturbojpeg.dylib',
         '/usr/local/opt/jpeg-turbo/lib/libturbojpeg.dylib',
         '/opt/libjpeg-turbo/lib64/libturbojpeg.dylib',
         '/opt/homebrew/opt/jpeg-turbo/lib/libturbojpeg.dylib'
     ],
     'Linux': [
+        '/usr/local/lib/libturbojpeg.so.0',
         '/usr/lib/x86_64-linux-gnu/libturbojpeg.so.0',
         '/usr/lib/aarch64-linux-gnu/libturbojpeg.so.0',
         '/usr/lib/libturbojpeg.so.0',
@@ -60,12 +62,12 @@ DEFAULT_LIB_PATHS = {
 }
 
 # error codes
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJERR_WARNING = 0
 TJERR_FATAL = 1
 
 # color spaces
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJCS_RGB = 0
 TJCS_YCbCr = 1
 TJCS_GRAY = 2
@@ -73,7 +75,7 @@ TJCS_CMYK = 3
 TJCS_YCCK = 4
 
 # pixel formats
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJPF_RGB = 0
 TJPF_BGR = 1
 TJPF_RGBX = 2
@@ -88,7 +90,7 @@ TJPF_ARGB = 10
 TJPF_CMYK = 11
 
 # chrominance subsampling options
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJSAMP_444 = 0
 TJSAMP_422 = 1
 TJSAMP_420 = 2
@@ -98,7 +100,7 @@ TJSAMP_411 = 5
 TJSAMP_441 = 6
 
 # transform operations
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJXOP_NONE = 0
 TJXOP_HFLIP = 1
 TJXOP_VFLIP = 2
@@ -109,7 +111,7 @@ TJXOP_ROT180 = 6
 TJXOP_ROT270 = 7
 
 # transform options
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJXOPT_PERFECT = 1
 TJXOPT_TRIM = 2
 TJXOPT_CROP = 4
@@ -119,7 +121,7 @@ TJXOPT_PROGRESSIVE = 32
 TJXOPT_COPYNONE = 64
 
 # pixel size
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 tjPixelSize = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
 
 # MCU block width (in pixels) for a given level of chrominance subsampling.
@@ -141,7 +143,7 @@ tjMCUWidth = [8, 16, 16, 8, 8, 32]
 tjMCUHeight = [8, 8, 16, 8, 16, 8]
 
 # miscellaneous flags
-# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/turbojpeg.h
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 # note: TJFLAG_NOREALLOC cannot be supported due to reallocation is needed by PyTurboJPEG.
 TJFLAG_BOTTOMUP = 2
 TJFLAG_FASTUPSAMPLE = 256
@@ -150,6 +152,40 @@ TJFLAG_ACCURATEDCT = 4096
 TJFLAG_STOPONWARNING = 8192
 TJFLAG_PROGRESSIVE = 16384
 TJFLAG_LIMITSCANS = 32768
+
+# tj3Init types
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
+TJINIT_COMPRESS = 0
+TJINIT_DECOMPRESS = 1
+TJINIT_TRANSFORM = 2
+
+# tj3Set/tj3Get parameters
+# see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
+TJPARAM_STOPONWARNING = 0
+TJPARAM_BOTTOMUP = 1
+TJPARAM_NOREALLOC = 2
+TJPARAM_QUALITY = 3
+TJPARAM_SUBSAMP = 4
+TJPARAM_JPEGWIDTH = 5
+TJPARAM_JPEGHEIGHT = 6
+TJPARAM_PRECISION = 7
+TJPARAM_COLORSPACE = 8
+TJPARAM_FASTUPSAMPLE = 9
+TJPARAM_FASTDCT = 10
+TJPARAM_OPTIMIZE = 11
+TJPARAM_PROGRESSIVE = 12
+TJPARAM_SCANLIMIT = 13
+TJPARAM_ARITHMETIC = 14
+TJPARAM_LOSSLESS = 15
+TJPARAM_LOSSLESSPSV = 16
+TJPARAM_LOSSLESSPT = 17
+TJPARAM_RESTARTBLOCKS = 18
+TJPARAM_RESTARTROWS = 19
+TJPARAM_XDENSITY = 20
+TJPARAM_YDENSITY = 21
+TJPARAM_DENSITYUNITS = 22
+TJPARAM_MAXPIXELS = 23
+TJPARAM_MAXMEMORY = 24
 
 class CroppingRegion(Structure):
     _fields_ = [("x", c_int), ("y", c_int), ("w", c_int), ("h", c_int)]
@@ -299,84 +335,130 @@ class TurboJPEG(object):
     def __init__(self, lib_path=None):
         turbo_jpeg = cdll.LoadLibrary(
             self.__find_turbojpeg() if lib_path is None else lib_path)
-        self.__init_decompress = turbo_jpeg.tjInitDecompress
-        self.__init_decompress.restype = c_void_p
-        self.__buffer_size = turbo_jpeg.tjBufSize
+        
+        # Check for TurboJPEG 3.x API compatibility
+        # tj3Init is the key function that indicates TurboJPEG 3.0+
+        if not hasattr(turbo_jpeg, 'tj3Init'):
+            raise RuntimeError(
+                'PyTurboJPEG 2.0 requires libjpeg-turbo 3.0 or later.\n'
+                'The loaded library appears to be libjpeg-turbo 2.x or older.\n'
+                '\n'
+                'Please upgrade your libjpeg-turbo installation to version 3.0 or later.\n'
+                'Download the appropriate binary for your system from:\n'
+                'https://github.com/libjpeg-turbo/libjpeg-turbo/releases\n'
+                '\n'
+                'Alternatively, use PyTurboJPEG 1.x for libjpeg-turbo 2.x compatibility.')
+        
+        # tj3Init - unified initialization for compress/decompress/transform
+        self.__init = turbo_jpeg.tj3Init
+        self.__init.argtypes = [c_int]
+        self.__init.restype = c_void_p
+        
+        # tj3Destroy - cleanup
+        self.__destroy = turbo_jpeg.tj3Destroy
+        self.__destroy.argtypes = [c_void_p]
+        self.__destroy.restype = None
+        
+        # tj3Set - set compression/decompression parameters
+        self.__set = turbo_jpeg.tj3Set
+        self.__set.argtypes = [c_void_p, c_int, c_int]
+        self.__set.restype = c_int
+        
+        # tj3Get - get parameters from handle
+        self.__get = turbo_jpeg.tj3Get
+        self.__get.argtypes = [c_void_p, c_int]
+        self.__get.restype = c_int
+        
+        # tj3SetScalingFactor - set scaling factor for decompression
+        self.__set_scaling_factor = turbo_jpeg.tj3SetScalingFactor
+        self.__set_scaling_factor.argtypes = [c_void_p, ScalingFactor]
+        self.__set_scaling_factor.restype = c_int
+        
+        # tj3JPEGBufSize - calculate buffer size for JPEG compression
+        self.__buffer_size = turbo_jpeg.tj3JPEGBufSize
         self.__buffer_size.argtypes = [c_int, c_int, c_int]
-        self.__buffer_size.restype = c_ulong
-        self.__init_compress = turbo_jpeg.tjInitCompress
-        self.__init_compress.restype = c_void_p
-        self.__buffer_size_YUV2 = turbo_jpeg.tjBufSizeYUV2
-        self.__buffer_size_YUV2.argtypes = [c_int, c_int, c_int, c_int]
-        self.__buffer_size_YUV2.restype = c_ulong
-        self.__plane_width = turbo_jpeg.tjPlaneWidth
+        self.__buffer_size.restype = c_size_t
+        
+        # tj3YUVBufSize - calculate buffer size for YUV
+        self.__buffer_size_YUV = turbo_jpeg.tj3YUVBufSize
+        self.__buffer_size_YUV.argtypes = [c_int, c_int, c_int, c_int]
+        self.__buffer_size_YUV.restype = c_size_t
+        
+        # tj3YUVPlaneWidth - get YUV plane width
+        self.__plane_width = turbo_jpeg.tj3YUVPlaneWidth
         self.__plane_width.argtypes = [c_int, c_int, c_int]
         self.__plane_width.restype = c_int
-        self.__plane_height = turbo_jpeg.tjPlaneHeight
+        
+        # tj3YUVPlaneHeight - get YUV plane height
+        self.__plane_height = turbo_jpeg.tj3YUVPlaneHeight
         self.__plane_height.argtypes = [c_int, c_int, c_int]
         self.__plane_height.restype = c_int
-        self.__destroy = turbo_jpeg.tjDestroy
-        self.__destroy.argtypes = [c_void_p]
-        self.__destroy.restype = c_int
-        self.__decompress_header = turbo_jpeg.tjDecompressHeader3
-        self.__decompress_header.argtypes = [
-            c_void_p, POINTER(c_ubyte), c_ulong, POINTER(c_int),
-            POINTER(c_int), POINTER(c_int), POINTER(c_int)]
+        
+        # tj3DecompressHeader - decompress JPEG header
+        self.__decompress_header = turbo_jpeg.tj3DecompressHeader
+        self.__decompress_header.argtypes = [c_void_p, POINTER(c_ubyte), c_size_t]
         self.__decompress_header.restype = c_int
-        self.__decompress = turbo_jpeg.tjDecompress2
+        
+        # tj3Decompress8 - decompress JPEG to 8-bit image
+        self.__decompress = turbo_jpeg.tj3Decompress8
         self.__decompress.argtypes = [
-            c_void_p, POINTER(c_ubyte), c_ulong, POINTER(c_ubyte),
-            c_int, c_int, c_int, c_int, c_int]
+            c_void_p, POINTER(c_ubyte), c_size_t, POINTER(c_ubyte), c_int, c_int]
         self.__decompress.restype = c_int
-        self.__decompressToYUV2 = turbo_jpeg.tjDecompressToYUV2
-        self.__decompressToYUV2.argtypes = [
-            c_void_p, POINTER(c_ubyte), c_ulong, POINTER(c_ubyte),
-            c_int, c_int, c_int, c_int]
-        self.__decompressToYUV2.restype = c_int
-        self.__decompressToYUVPlanes = turbo_jpeg.tjDecompressToYUVPlanes
+        
+        # tj3DecompressToYUV8 - decompress JPEG to YUV
+        self.__decompressToYUV = turbo_jpeg.tj3DecompressToYUV8
+        self.__decompressToYUV.argtypes = [
+            c_void_p, POINTER(c_ubyte), c_size_t, POINTER(c_ubyte), c_int]
+        self.__decompressToYUV.restype = c_int
+        
+        # tj3DecompressToYUVPlanes8 - decompress JPEG to YUV planes
+        self.__decompressToYUVPlanes = turbo_jpeg.tj3DecompressToYUVPlanes8
         self.__decompressToYUVPlanes.argtypes = [
-            c_void_p, POINTER(c_ubyte), c_ulong, POINTER(POINTER(c_ubyte)),
-            c_int, POINTER(c_int), c_int, c_int]
+            c_void_p, POINTER(c_ubyte), c_size_t, POINTER(POINTER(c_ubyte)), POINTER(c_int)]
         self.__decompressToYUVPlanes.restype = c_int
-        self.__compress = turbo_jpeg.tjCompress2
+        
+        # tj3Compress8 - compress 8-bit image to JPEG
+        self.__compress = turbo_jpeg.tj3Compress8
         self.__compress.argtypes = [
             c_void_p, POINTER(c_ubyte), c_int, c_int, c_int, c_int,
-            POINTER(c_void_p), POINTER(c_ulong), c_int, c_int, c_int]
+            POINTER(c_void_p), POINTER(c_size_t)]
         self.__compress.restype = c_int
-        self.__compressFromYUV = turbo_jpeg.tjCompressFromYUV
+        
+        # tj3CompressFromYUV8 - compress YUV to JPEG
+        self.__compressFromYUV = turbo_jpeg.tj3CompressFromYUV8
         self.__compressFromYUV.argtypes = [
-            c_void_p, POINTER(c_ubyte), c_int, c_int, c_int, c_int,
-            POINTER(c_void_p), POINTER(c_ulong), c_int, c_int]
+            c_void_p, POINTER(c_ubyte), c_int, c_int, c_int,
+            POINTER(c_void_p), POINTER(c_size_t)]
         self.__compressFromYUV.restype = c_int
-        self.__init_transform = turbo_jpeg.tjInitTransform
-        self.__init_transform.restype = c_void_p
-        self.__transform = turbo_jpeg.tjTransform
+        
+        # tj3Transform - lossless JPEG transformation
+        self.__transform = turbo_jpeg.tj3Transform
         self.__transform.argtypes = [
-            c_void_p, POINTER(c_ubyte), c_ulong, c_int, POINTER(c_void_p),
-            POINTER(c_ulong), POINTER(TransformStruct), c_int]
+            c_void_p, POINTER(c_ubyte), c_size_t, c_int, POINTER(c_void_p),
+            POINTER(c_size_t), POINTER(TransformStruct)]
         self.__transform.restype = c_int
-        self.__transform3 = getattr(turbo_jpeg, 'tj3Transform', None)
-        if self.__transform3 is not None:
-            self.__transform3.argtypes = [
-                c_void_p, POINTER(c_ubyte), c_size_t, c_int, POINTER(c_void_p),
-                POINTER(c_size_t), POINTER(TransformStruct)]
-            self.__transform3.restype = c_int
-        self.__free = turbo_jpeg.tjFree
+        
+        # tj3Free - free memory allocated by TurboJPEG
+        self.__free = turbo_jpeg.tj3Free
         self.__free.argtypes = [c_void_p]
         self.__free.restype = None
-        self.__get_error_str = turbo_jpeg.tjGetErrorStr
+        
+        # tj3Alloc - allocate memory using TurboJPEG allocator
+        self.__alloc = turbo_jpeg.tj3Alloc
+        self.__alloc.argtypes = [c_size_t]
+        self.__alloc.restype = c_void_p
+        
+        # tj3GetErrorStr - get error string
+        self.__get_error_str = turbo_jpeg.tj3GetErrorStr
+        self.__get_error_str.argtypes = [c_void_p]
         self.__get_error_str.restype = c_char_p
-        # tjGetErrorStr2 is only available in newer libjpeg-turbo
-        self.__get_error_str2 = getattr(turbo_jpeg, 'tjGetErrorStr2', None)
-        if self.__get_error_str2 is not None:
-            self.__get_error_str2.argtypes = [c_void_p]
-            self.__get_error_str2.restype = c_char_p
-        # tjGetErrorCode is only available in newer libjpeg-turbo
-        self.__get_error_code = getattr(turbo_jpeg, 'tjGetErrorCode', None)
-        if self.__get_error_code is not None:
-            self.__get_error_code.argtypes = [c_void_p]
-            self.__get_error_code.restype = c_int
+        
+        # tj3GetErrorCode - get error code
+        self.__get_error_code = turbo_jpeg.tj3GetErrorCode
+        self.__get_error_code.argtypes = [c_void_p]
+        self.__get_error_code.restype = c_int
 
+        # tjGetScalingFactors - still the current API in 3.1.x
         get_scaling_factors = turbo_jpeg.tjGetScalingFactors
         get_scaling_factors.argtypes = [POINTER(c_int)]
         get_scaling_factors.restype = POINTER(ScalingFactor)
@@ -391,27 +473,39 @@ class TurboJPEG(object):
         """decodes JPEG header and returns image properties as a tuple.
            e.g. (width, height, jpeg_subsample, jpeg_colorspace)
         """
-        handle = self.__init_decompress()
+        handle = self.__init(TJINIT_DECOMPRESS)
         try:
-            width = c_int()
-            height = c_int()
-            jpeg_subsample = c_int()
-            jpeg_colorspace = c_int()
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
-            status = self.__decompress_header(
-                handle, src_addr, jpeg_array.size, byref(width), byref(height),
-                byref(jpeg_subsample), byref(jpeg_colorspace))
+            status = self.__decompress_header(handle, src_addr, jpeg_array.size)
             if status != 0:
                 self.__report_error(handle)
-            return (width.value, height.value, jpeg_subsample.value, jpeg_colorspace.value)
+            # Use tj3Get to retrieve header information
+            width = self.__get(handle, TJPARAM_JPEGWIDTH)
+            height = self.__get(handle, TJPARAM_JPEGHEIGHT)
+            jpeg_subsample = self.__get(handle, TJPARAM_SUBSAMP)
+            jpeg_colorspace = self.__get(handle, TJPARAM_COLORSPACE)
+            # Check for errors (tj3Get returns -1 on error)
+            if width < 0 or height < 0 or jpeg_subsample < 0 or jpeg_colorspace < 0:
+                self.__report_error(handle)
+            return (width, height, jpeg_subsample, jpeg_colorspace)
         finally:
             self.__destroy(handle)
 
     def decode(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0, dst=None):
         """decodes JPEG memory buffer to numpy array."""
-        handle = self.__init_decompress()
+        handle = self.__init(TJINIT_DECOMPRESS)
         try:
+            # Set decompression parameters using tj3Set
+            if flags & TJFLAG_BOTTOMUP:
+                self.__set(handle, TJPARAM_BOTTOMUP, 1)
+            if flags & TJFLAG_FASTUPSAMPLE:
+                self.__set(handle, TJPARAM_FASTUPSAMPLE, 1)
+            if flags & TJFLAG_FASTDCT:
+                self.__set(handle, TJPARAM_FASTDCT, 1)
+            if flags & TJFLAG_STOPONWARNING:
+                self.__set(handle, TJPARAM_STOPONWARNING, 1)
+            
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             scaled_width, scaled_height, _, _ = \
@@ -425,9 +519,10 @@ class TurboJPEG(object):
                     [scaled_height, scaled_width, tjPixelSize[pixel_format]],
                     dtype=np.uint8)
             dest_addr = self.__getaddr(img_array)
+            # pitch should be width * bytes_per_pixel (samples per row)
+            pitch = scaled_width * tjPixelSize[pixel_format]
             status = self.__decompress(
-                handle, src_addr, jpeg_array.size, dest_addr, scaled_width,
-                0, scaled_height, pixel_format, flags)
+                handle, src_addr, jpeg_array.size, dest_addr, pitch, pixel_format)
             if status != 0:
                 self.__report_error(handle)
             return img_array
@@ -436,18 +531,17 @@ class TurboJPEG(object):
 
     def decode_to_yuv(self, jpeg_buf, scaling_factor=None, pad=4, flags=0):
         """decodes JPEG memory buffer to yuv array."""
-        handle = self.__init_decompress()
+        handle = self.__init(TJINIT_DECOMPRESS)
         try:
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             scaled_width, scaled_height, jpeg_subsample, _ = \
                 self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
-            buffer_size = self.__buffer_size_YUV2(scaled_width, pad, scaled_height, jpeg_subsample)
+            buffer_size = self.__buffer_size_YUV(scaled_width, pad, scaled_height, jpeg_subsample)
             buffer_array = np.empty(buffer_size, dtype=np.uint8)
             dest_addr = self.__getaddr(buffer_array)
-            status = self.__decompressToYUV2(
-                handle, src_addr, jpeg_array.size, dest_addr, scaled_width,
-                pad, scaled_height, flags)
+            status = self.__decompressToYUV(
+                handle, src_addr, jpeg_array.size, dest_addr, pad)
             if status != 0:
                 self.__report_error(handle)
             plane_sizes = list()
@@ -463,7 +557,7 @@ class TurboJPEG(object):
 
     def decode_to_yuv_planes(self, jpeg_buf, scaling_factor=None, strides=(0, 0, 0), flags=0):
         """decodes JPEG memory buffer to yuv planes."""
-        handle = self.__init_decompress()
+        handle = self.__init(TJINIT_DECOMPRESS)
         try:
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
@@ -484,7 +578,7 @@ class TurboJPEG(object):
                     (self.__plane_height(i, scaled_height, jpeg_subsample), strides_addr[i]), dtype=np.uint8))
                 dest_addr[i] = self.__getaddr(planes[i])
             status = self.__decompressToYUVPlanes(
-                handle, src_addr, jpeg_array.size, dest_addr, scaled_width, strides_addr, scaled_height, flags)
+                handle, src_addr, jpeg_array.size, dest_addr, strides_addr)
             if status != 0:
                 self.__report_error(handle)
             return planes
@@ -493,8 +587,20 @@ class TurboJPEG(object):
 
     def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None):
         """encodes numpy array to JPEG memory buffer."""
-        handle = self.__init_compress()
+        handle = self.__init(TJINIT_COMPRESS)
         try:
+            # Set compression parameters using tj3Set
+            if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
+                self.__report_error(handle)
+            if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
+                self.__report_error(handle)
+            if flags & TJFLAG_PROGRESSIVE:
+                if self.__set(handle, TJPARAM_PROGRESSIVE, 1) != 0:
+                    self.__report_error(handle)
+            if flags & TJFLAG_FASTDCT:
+                if self.__set(handle, TJPARAM_FASTDCT, 1) != 0:
+                    self.__report_error(handle)
+            
             img_array = np.ascontiguousarray(img_array)
             if dst is not None and not self.__is_buffer(dst):
                 raise TypeError('\'dst\' argument must support buffer protocol')
@@ -502,11 +608,11 @@ class TurboJPEG(object):
                 (len(dst) >= self.buffer_size(img_array, jpeg_subsample))):
                 dst_array = np.frombuffer(dst, dtype=np.uint8)
                 jpeg_buf = dst_array.ctypes.data_as(c_void_p)
-                jpeg_size = c_ulong(len(dst))
+                jpeg_size = c_size_t(len(dst))
             else:
                 dst_array = None
                 jpeg_buf = c_void_p()
-                jpeg_size = c_ulong()
+                jpeg_size = c_size_t()
             height, width = img_array.shape[:2]
             channel = tjPixelSize[pixel_format]
             if channel > 1 and (len(img_array.shape) < 3 or img_array.shape[2] != channel):
@@ -514,7 +620,7 @@ class TurboJPEG(object):
             src_addr = self.__getaddr(img_array)
             status = self.__compress(
                 handle, src_addr, width, img_array.strides[0], height, pixel_format,
-                byref(jpeg_buf), byref(jpeg_size), jpeg_subsample, quality, flags)
+                byref(jpeg_buf), byref(jpeg_size))
             if status != 0:
                 self.__report_error(handle)
             if dst_array is None or jpeg_buf.value != dst_array.ctypes.data:
@@ -528,15 +634,21 @@ class TurboJPEG(object):
 
     def encode_from_yuv(self, img_array, height, width, quality=85, jpeg_subsample=TJSAMP_420, flags=0):
         """encodes numpy array to JPEG memory buffer."""
-        handle = self.__init_compress()
+        handle = self.__init(TJINIT_COMPRESS)
         try:
+            # Set compression parameters using tj3Set
+            if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
+                self.__report_error(handle)
+            if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
+                self.__report_error(handle)
+            
             jpeg_buf = c_void_p()
-            jpeg_size = c_ulong()
+            jpeg_size = c_size_t()
             img_array = np.ascontiguousarray(img_array)
             src_addr = self.__getaddr(img_array)
             status = self.__compressFromYUV(
-                handle, src_addr, width, 4, height, jpeg_subsample,
-                byref(jpeg_buf), byref(jpeg_size), quality, flags)
+                handle, src_addr, width, 4, height,
+                byref(jpeg_buf), byref(jpeg_size))
             if status != 0:
                 self.__report_error(handle)
             dest_buf = create_string_buffer(jpeg_size.value)
@@ -548,27 +660,32 @@ class TurboJPEG(object):
 
     def scale_with_quality(self, jpeg_buf, scaling_factor=None, quality=85, flags=0):
         """decompresstoYUV with scale factor, recompresstoYUV with quality factor"""
-        handle = self.__init_decompress()
+        handle = self.__init(TJINIT_DECOMPRESS)
         try:
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             scaled_width, scaled_height, jpeg_subsample, _ = self.__get_header_and_dimensions(
                 handle, jpeg_array.size, src_addr, scaling_factor)
-            buffer_YUV_size = self.__buffer_size_YUV2(
+            buffer_YUV_size = self.__buffer_size_YUV(
                 scaled_width, 4, scaled_height, jpeg_subsample)
             img_array = np.empty([buffer_YUV_size])
             dest_addr = self.__getaddr(img_array)
-            status = self.__decompressToYUV2(
-                handle, src_addr, jpeg_array.size, dest_addr, scaled_width, 4, scaled_height, flags)
+            status = self.__decompressToYUV(
+                handle, src_addr, jpeg_array.size, dest_addr, 4)
             if status != 0:
                 self.__report_error(handle)
             self.__destroy(handle)
-            handle = self.__init_compress()
+            handle = self.__init(TJINIT_COMPRESS)
+            # Set compression parameters
+            if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
+                self.__report_error(handle)
+            if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
+                self.__report_error(handle)
             jpeg_buf = c_void_p()
-            jpeg_size = c_ulong()
+            jpeg_size = c_size_t()
             status = self.__compressFromYUV(
-                handle, dest_addr, scaled_width, 4, scaled_height, jpeg_subsample, byref(jpeg_buf),
-                byref(jpeg_size), quality, flags)
+                handle, dest_addr, scaled_width, 4, scaled_height, byref(jpeg_buf),
+                byref(jpeg_size))
             if status != 0:
                 self.__report_error(handle)
             dest_buf = create_string_buffer(jpeg_size.value)
@@ -580,27 +697,29 @@ class TurboJPEG(object):
 
     def crop(self, jpeg_buf, x, y, w, h, preserve=False, gray=False, copynone=False):
         """losslessly crop a jpeg image with optional grayscale"""
-        handle = self.__init_transform()
+        handle = self.__init(TJINIT_TRANSFORM)
         try:
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
-            width = c_int()
-            height = c_int()
-            jpeg_colorspace = c_int()
-            jpeg_subsample = c_int()
-            status = self.__decompress_header(
-                handle, src_addr, jpeg_array.size, byref(width), byref(height),
-                byref(jpeg_subsample), byref(jpeg_colorspace))
+            # Get header information using tj3DecompressHeader
+            status = self.__decompress_header(handle, src_addr, jpeg_array.size)
             if status != 0:
                 self.__report_error(handle)
+            width = self.__get(handle, TJPARAM_JPEGWIDTH)
+            height = self.__get(handle, TJPARAM_JPEGHEIGHT)
+            jpeg_subsample = self.__get(handle, TJPARAM_SUBSAMP)
+            
             x, w = self.__axis_to_image_boundaries(
-                x, w, width.value, preserve, tjMCUWidth[jpeg_subsample.value])
+                x, w, width, preserve, tjMCUWidth[jpeg_subsample])
             y, h = self.__axis_to_image_boundaries(
-                y, h, height.value, preserve, tjMCUHeight[jpeg_subsample.value])
+                y, h, height, preserve, tjMCUHeight[jpeg_subsample])
             region = CroppingRegion(x, y, w, h)
-            crop_transform = TransformStruct(region, TJXOP_NONE,
-                TJXOPT_CROP | (gray and TJXOPT_GRAY) | (copynone and TJXOPT_COPYNONE))
-            return self.__do_transform(handle, src_addr, jpeg_array.size, 1, byref(crop_transform))[0]
+            # Use array initialization to ensure all fields are properly zero-initialized
+            crop_transforms = (TransformStruct * 1)()
+            crop_transforms[0].r = region
+            crop_transforms[0].op = TJXOP_NONE
+            crop_transforms[0].options = TJXOPT_CROP | (gray and TJXOPT_GRAY) | (copynone and TJXOPT_COPYNONE)
+            return self.__do_transform(handle, src_addr, jpeg_array.size, 1, crop_transforms)[0]
 
         finally:
             self.__destroy(handle)
@@ -630,28 +749,24 @@ class TurboJPEG(object):
         List[bytes]
             Cropped and/or extended jpeg images.
         """
-        handle = self.__init_transform()
+        handle = self.__init(TJINIT_TRANSFORM)
         try:
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
-            image_width = c_int()
-            image_height = c_int()
-            jpeg_subsample = c_int()
-            jpeg_colorspace = c_int()
 
             # Decompress header to get input image size and subsample value
             decompress_header_status = self.__decompress_header(
                 handle,
                 src_addr,
-                jpeg_array.size,
-                byref(image_width),
-                byref(image_height),
-                byref(jpeg_subsample),
-                byref(jpeg_colorspace)
+                jpeg_array.size
             )
 
             if decompress_header_status != 0:
                 self.__report_error(handle)
+            
+            image_width = self.__get(handle, TJPARAM_JPEGWIDTH)
+            image_height = self.__get(handle, TJPARAM_JPEGHEIGHT)
+            jpeg_subsample = self.__get(handle, TJPARAM_SUBSAMP)
 
             # Define cropping regions from input parameters and image size
             crop_regions = self.__define_cropping_regions(crop_parameters)
@@ -663,7 +778,7 @@ class TurboJPEG(object):
                 # The fill_background callback is slow, only use it if needed
                 if self.__need_fill_background(
                     crop_region,
-                    (image_width.value, image_height.value),
+                    (image_width, image_height),
                     background_luminance
                 ):
                     # Use callback to fill in background post-transform
@@ -726,9 +841,8 @@ class TurboJPEG(object):
         # Pointers to output image buffers
         dest_array = (c_void_p * number_of_transforms)()
         try:
-            if self.__transform3 is not None:
-                dest_size = (c_size_t * number_of_transforms)()
-                transform_status = self.__transform3(
+            dest_size = (c_size_t * number_of_transforms)()
+            transform_status = self.__transform(
                 handle,
                 src_buf,
                 src_size,
@@ -736,18 +850,6 @@ class TurboJPEG(object):
                 dest_array,
                 dest_size,
                 transforms,
-            )
-            else:
-                dest_size = (c_ulong * number_of_transforms)()
-                transform_status = self.__transform(
-                handle,
-                src_buf,
-                src_size,
-                number_of_transforms,
-                dest_array,
-                dest_size,
-                transforms,
-                0
             )
 
             if transform_status != 0:
@@ -775,24 +877,39 @@ class TurboJPEG(object):
             scaling_factor not in self.__scaling_factors:
             raise ValueError('supported scaling factors are ' +
                 str(self.__scaling_factors))
-        width = c_int()
-        height = c_int()
-        jpeg_colorspace = c_int()
-        jpeg_subsample = c_int()
-        status = self.__decompress_header(
-            handle, src_addr, jpeg_array_size, byref(width), byref(height),
-            byref(jpeg_subsample), byref(jpeg_colorspace))
+        
+        # Decompress header first to get dimensions
+        status = self.__decompress_header(handle, src_addr, jpeg_array_size)
         if status != 0:
             self.__report_error(handle)
-        scaled_width = width.value
-        scaled_height = height.value
+        
+        # Get unscaled header information using tj3Get
+        width = self.__get(handle, TJPARAM_JPEGWIDTH)
+        height = self.__get(handle, TJPARAM_JPEGHEIGHT)
+        jpeg_subsample = self.__get(handle, TJPARAM_SUBSAMP)
+        jpeg_colorspace = self.__get(handle, TJPARAM_COLORSPACE)
+        
+        # Check for errors (tj3Get returns -1 on error)
+        if width < 0 or height < 0 or jpeg_subsample < 0 or jpeg_colorspace < 0:
+            self.__report_error(handle)
+        
+        # Set scaling factor if provided - must be done AFTER reading header
+        scaled_width = width
+        scaled_height = height
         if scaling_factor is not None:
-            def get_scaled_value(dim, num, denom):
-                return (dim * num + denom - 1) // denom
-            scaled_width = get_scaled_value(
-                scaled_width, scaling_factor[0], scaling_factor[1])
-            scaled_height = get_scaled_value(
-                scaled_height, scaling_factor[0], scaling_factor[1])
+            num, denom = scaling_factor[0], scaling_factor[1]
+            sf = ScalingFactor()
+            sf.num = num
+            sf.denom = denom
+            status = self.__set_scaling_factor(handle, sf)
+            if status != 0:
+                self.__report_error(handle)
+            # Calculate scaled dimensions manually
+            def get_scaled_value(dim, n, d):
+                return (dim * n + d - 1) // d
+            scaled_width = get_scaled_value(width, num, denom)
+            scaled_height = get_scaled_value(height, num, denom)
+        
         return scaled_width, scaled_height, jpeg_subsample, jpeg_colorspace
 
     def __axis_to_image_boundaries(self, a, b, img_boundary, preserve, mcuBlock):
@@ -963,21 +1080,17 @@ class TurboJPEG(object):
 
     def __report_error(self, handle):
         """reports error while error occurred"""
-        if self.__get_error_code is not None:
-            # using new error handling logic if possible
-            if self.__get_error_code(handle) == TJERR_WARNING:
-                warnings.warn(self.__get_error_string(handle))
-                return
+        # tj3GetErrorCode always returns the error code
+        if self.__get_error_code(handle) == TJERR_WARNING:
+            warnings.warn(self.__get_error_string(handle))
+            return
         # fatal error occurred
         raise IOError(self.__get_error_string(handle))
 
     def __get_error_string(self, handle):
         """returns error string"""
-        if self.__get_error_str2 is not None:
-            # using new interface if possible
-            return self.__get_error_str2(handle).decode()
-        # fallback to old interface
-        return self.__get_error_str().decode()
+        # tj3GetErrorStr always takes handle parameter
+        return self.__get_error_str(handle).decode()
 
     def __find_turbojpeg(self):
         """returns default turbojpeg library path if possible"""

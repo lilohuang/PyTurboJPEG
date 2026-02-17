@@ -2,8 +2,10 @@
 A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image.
 
 ## Prerequisites
-- [libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo/releases)
+- [libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo/releases) **3.0 or later** (required for PyTurboJPEG 2.0+)
 - [numpy](https://github.com/numpy/numpy)
+
+**Important**: PyTurboJPEG 2.0+ requires libjpeg-turbo 3.0 or later as it uses the new function-based TurboJPEG 3 API. If you need to use libjpeg-turbo 2.x, please use PyTurboJPEG 1.x instead.
 
 ## Example
 
@@ -188,31 +190,3 @@ cv2.waitKey(0)
   - sudo apt-get update
   - sudo apt-get install libturbojpeg
   - pip install -U git+https://github.com/lilohuang/PyTurboJPEG.git
-
-## Benchmark 
-
-### macOS
-- macOS Sierra 10.12.6
-- Intel(R) Core(TM) i5-3210M CPU @ 2.50GHz
-- opencv-python 3.4.0.12 (pre-built)
-- turbo-jpeg 1.5.3 (pre-built)
-
-| Function              | Wall-clock time |
-| ----------------------|-----------------|
-| cv2.imdecode()        |   0.528 sec     |
-| TurboJPEG.decode()    |   0.191 sec     |
-| cv2.imencode()        |   0.875 sec     |
-| TurboJPEG.encode()    |   0.176 sec     |
-
-### Windows 
-- Windows 7 Ultimate 64-bit
-- Intel(R) Xeon(R) E3-1276 v3 CPU @ 3.60 GHz
-- opencv-python 3.4.0.12 (pre-built)
-- turbo-jpeg 1.5.3 (pre-built)
-
-| Function              | Wall-clock time |
-| ----------------------|-----------------|
-| cv2.imdecode()        |   0.358 sec     |
-| TurboJPEG.decode()    |   0.135 sec     |
-| cv2.imencode()        |   0.581 sec     |
-| TurboJPEG.encode()    |   0.140 sec     |
