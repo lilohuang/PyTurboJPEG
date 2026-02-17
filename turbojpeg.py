@@ -552,8 +552,8 @@ class TurboJPEG(object):
             - jpeg_colorspace: colorspace (TJCS_*)
             - precision: bit precision (8, 12, or 16) - only when return_precision=True
         
-        Example
-        -------
+        Examples
+        --------
         >>> # Standard usage (backward compatible)
         >>> width, height, subsample, colorspace = jpeg.decode_header(jpeg_data)
         >>> 

@@ -1713,6 +1713,7 @@ class TestHighPrecision:
         
         # Test 16-bit (if supported)
         try:
+            # np.random.randint upper bound is exclusive, so use 65536 to get values 0-65535
             img_16bit = np.random.randint(0, 65536, (50, 50, 3), dtype=np.uint16)
             jpeg_16bit = jpeg_instance.encode_16bit(img_16bit)
             _, _, _, _, precision = jpeg_instance.decode_header(jpeg_16bit, return_precision=True)
