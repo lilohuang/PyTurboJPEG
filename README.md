@@ -80,17 +80,22 @@ with open('input.jpg', 'rb') as f:
 ### Decoding Header Information
 
 ```python
-# Get image properties without full decoding
+# Get image properties without full decoding (backward compatible)
 with open('input.jpg', 'rb') as f:
-    width, height, jpeg_subsample, jpeg_colorspace, precision = jpeg.decode_header(f.read())
+    width, height, jpeg_subsample, jpeg_colorspace = jpeg.decode_header(f.read())
 
-# Use precision to select appropriate decode function
-if precision == 8:
-    img = jpeg.decode(jpeg_data)
-elif precision == 12:
-    img = jpeg.decode_12bit(jpeg_data)
-elif precision == 16:
-    img = jpeg.decode_16bit(jpeg_data)
+# Get precision to select appropriate decode function
+with open('input.jpg', 'rb') as f:
+    jpeg_data = f.read()
+    width, height, jpeg_subsample, jpeg_colorspace, precision = jpeg.decode_header(jpeg_data, return_precision=True)
+    
+    # Use precision to select appropriate decode function
+    if precision == 8:
+        img = jpeg.decode(jpeg_data)
+    elif precision == 12:
+        img = jpeg.decode_12bit(jpeg_data)
+    elif precision == 16:
+        img = jpeg.decode_16bit(jpeg_data)
 ```
 
 ### YUV Decoding

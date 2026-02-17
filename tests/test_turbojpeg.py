@@ -146,11 +146,17 @@ class TestDecodeHeader:
     
     def test_decode_header_basic(self, jpeg_instance, encoded_sample_jpeg):
         """Test decoding JPEG header returns correct properties."""
-        width, height, subsample, colorspace, precision = jpeg_instance.decode_header(encoded_sample_jpeg)
+        # Test backward compatible usage (4-tuple)
+        width, height, subsample, colorspace = jpeg_instance.decode_header(encoded_sample_jpeg)
         assert width == 100
         assert height == 100
         assert subsample in [TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_GRAY]
         assert colorspace in [TJCS_RGB, TJCS_YCbCr, TJCS_GRAY]
+        
+        # Test new usage with precision (5-tuple)
+        width, height, subsample, colorspace, precision = jpeg_instance.decode_header(encoded_sample_jpeg, return_precision=True)
+        assert width == 100
+        assert height == 100
         assert precision == 8  # Standard JPEG is 8-bit
     
     def test_decode_header_invalid_data(self, jpeg_instance):
@@ -410,7 +416,7 @@ class TestScaleWithQuality:
         assert scaled_jpeg is not None
         assert isinstance(scaled_jpeg, bytes)
         # Verify the scaled image is smaller
-        width, height, _, _, _ = jpeg_instance.decode_header(scaled_jpeg)
+        width, height, _, _ = jpeg_instance.decode_header(scaled_jpeg)
         assert width == 50
         assert height == 50
     
@@ -430,7 +436,7 @@ class TestScaleWithQuality:
             scaling_factor=(1, 4),
             quality=80
         )
-        width, height, _, _, _ = jpeg_instance.decode_header(scaled_jpeg)
+        width, height, _, _ = jpeg_instance.decode_header(scaled_jpeg)
         assert width == 25
         assert height == 25
 
@@ -445,7 +451,7 @@ class TestCrop:
         assert cropped is not None
         assert isinstance(cropped, bytes)
         # Verify cropped dimensions
-        width, height, _, _, _ = jpeg_instance.decode_header(cropped)
+        width, height, _, _ = jpeg_instance.decode_header(cropped)
         assert width == 64
         assert height == 64
     
@@ -453,7 +459,7 @@ class TestCrop:
         """Test crop with grayscale conversion."""
         cropped = jpeg_instance.crop(encoded_sample_jpeg, 0, 0, 64, 64, gray=True)
         assert cropped is not None
-        width, height, subsample, _, _ = jpeg_instance.decode_header(cropped)
+        width, height, subsample, _ = jpeg_instance.decode_header(cropped)
         assert subsample == TJSAMP_GRAY
     
     def test_crop_with_preserve(self, jpeg_instance, encoded_sample_jpeg):
@@ -502,7 +508,7 @@ class TestCropMultiple:
             gray=True
         )
         assert len(cropped_list) == 1
-        width, height, subsample, _, _ = jpeg_instance.decode_header(cropped_list[0])
+        width, height, subsample, _ = jpeg_instance.decode_header(cropped_list[0])
         assert subsample == TJSAMP_GRAY
 
 
@@ -1141,7 +1147,7 @@ class TestCropFunctionality:
     def test_crop_input_image_loads(self, jpeg_instance, test_crop_image):
         """Test that the input image loads correctly."""
         # Verify we can decode the header
-        width, height, subsample, colorspace, precision = jpeg_instance.decode_header(test_crop_image)
+        width, height, subsample, colorspace = jpeg_instance.decode_header(test_crop_image)
         assert width == 200
         assert height == 200
         assert subsample in [TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_GRAY]
@@ -1158,7 +1164,7 @@ class TestCropFunctionality:
         assert len(cropped) > 0
         
         # Verify dimensions
-        width, height, _, _, _ = jpeg_instance.decode_header(cropped)
+        width, height, _, _ = jpeg_instance.decode_header(cropped)
         assert width == 96
         assert height == 96
         
@@ -1174,7 +1180,7 @@ class TestCropFunctionality:
         cropped = jpeg_instance.crop(test_crop_image, x, y, w, h)
         
         # Verify dimensions
-        width, height, _, _, _ = jpeg_instance.decode_header(cropped)
+        width, height, _, _ = jpeg_instance.decode_header(cropped)
         assert width == w
         assert height == h
         
@@ -1194,7 +1200,7 @@ class TestCropFunctionality:
         
         for x, y, w, h in test_cases:
             cropped = jpeg_instance.crop(test_crop_image, x, y, w, h)
-            width, height, _, _, _ = jpeg_instance.decode_header(cropped)
+            width, height, _, _ = jpeg_instance.decode_header(cropped)
             assert width == w, f"Width mismatch for crop at ({x},{y},{w},{h})"
             assert height == h, f"Height mismatch for crop at ({x},{y},{w},{h})"
     
@@ -1208,7 +1214,7 @@ class TestCropFunctionality:
         assert isinstance(cropped, bytes)
         
         # Dimensions may be adjusted to MCU boundaries
-        width, height, _, _, _ = jpeg_instance.decode_header(cropped)
+        width, height, _, _ = jpeg_instance.decode_header(cropped)
         assert width > 0
         assert height > 0
     
@@ -1219,7 +1225,7 @@ class TestCropFunctionality:
         assert cropped is not None
         
         # Verify grayscale subsampling
-        width, height, subsample, _, _ = jpeg_instance.decode_header(cropped)
+        width, height, subsample, _ = jpeg_instance.decode_header(cropped)
         assert width == 96
         assert height == 96
         assert subsample == TJSAMP_GRAY
@@ -1233,7 +1239,7 @@ class TestCropFunctionality:
         cropped = jpeg_instance.crop(test_crop_image, 0, 0, orig_width, orig_height)
         
         # Verify dimensions are close (within MCU block size)
-        width, height, _, _, _ = jpeg_instance.decode_header(cropped)
+        width, height, _, _ = jpeg_instance.decode_header(cropped)
         # MCU blocks are typically 8x8, 16x8, 16x16, or 32x8
         # Allow for MCU adjustment (up to 16 pixels difference)
         assert abs(width - orig_width) <= 16
@@ -1262,7 +1268,7 @@ class TestCropFunctionality:
             assert len(cropped) > 0
             
             # Verify dimensions
-            width, height, _, _, _ = jpeg_instance.decode_header(cropped)
+            width, height, _, _ = jpeg_instance.decode_header(cropped)
             expected_w, expected_h = crop_params[i][2], crop_params[i][3]
             assert width == expected_w
             assert height == expected_h
@@ -1274,14 +1280,14 @@ class TestCropFunctionality:
         # Crop from right edge (MCU-aligned)
         right_edge_x = orig_width - 48
         cropped_right = jpeg_instance.crop(test_crop_image, right_edge_x, 0, 48, 48)
-        width, height, _, _, _ = jpeg_instance.decode_header(cropped_right)
+        width, height, _, _ = jpeg_instance.decode_header(cropped_right)
         assert width == 48
         assert height == 48
         
         # Crop from bottom edge (MCU-aligned)
         bottom_edge_y = orig_height - 48
         cropped_bottom = jpeg_instance.crop(test_crop_image, 0, bottom_edge_y, 48, 48)
-        width, height, _, _, _ = jpeg_instance.decode_header(cropped_bottom)
+        width, height, _, _ = jpeg_instance.decode_header(cropped_bottom)
         assert width == 48
         assert height == 48
     
@@ -1664,11 +1670,12 @@ class TestHighPrecision:
     def test_12bit_decode_header(self, jpeg_instance, sample_12bit_image):
         """Test that decode_header works with 12-bit JPEGs and returns correct precision."""
         jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image)
-        width, height, subsample, colorspace, precision = jpeg_instance.decode_header(jpeg_buf)
+        # Test backward compatible mode
+        width, height, subsample, colorspace = jpeg_instance.decode_header(jpeg_buf)
         assert width == sample_12bit_image.shape[1]
         assert height == sample_12bit_image.shape[0]
-        assert subsample >= 0
-        assert colorspace >= 0
+        # Test with precision
+        width, height, subsample, colorspace, precision = jpeg_instance.decode_header(jpeg_buf, return_precision=True)
         assert precision == 12, "12-bit JPEG should report precision of 12"
     
     def test_16bit_decode_header(self, jpeg_instance, sample_16bit_image, supports_16bit):
@@ -1676,11 +1683,12 @@ class TestHighPrecision:
         if not supports_16bit:
             pytest.skip("16-bit precision not supported by this TurboJPEG build")
         jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image)
-        width, height, subsample, colorspace, precision = jpeg_instance.decode_header(jpeg_buf)
+        # Test backward compatible mode
+        width, height, subsample, colorspace = jpeg_instance.decode_header(jpeg_buf)
         assert width == sample_16bit_image.shape[1]
         assert height == sample_16bit_image.shape[0]
-        assert subsample >= 0
-        assert colorspace >= 0
+        # Test with precision
+        width, height, subsample, colorspace, precision = jpeg_instance.decode_header(jpeg_buf, return_precision=True)
         assert precision == 16, "16-bit JPEG should report precision of 16"
     
     def test_decode_header_precision_selection(self, jpeg_instance):
@@ -1688,7 +1696,7 @@ class TestHighPrecision:
         # Test 8-bit
         img_8bit = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
         jpeg_8bit = jpeg_instance.encode(img_8bit)
-        _, _, _, _, precision = jpeg_instance.decode_header(jpeg_8bit)
+        _, _, _, _, precision = jpeg_instance.decode_header(jpeg_8bit, return_precision=True)
         assert precision == 8
         if precision == 8:
             decoded = jpeg_instance.decode(jpeg_8bit)
@@ -1697,7 +1705,7 @@ class TestHighPrecision:
         # Test 12-bit
         img_12bit = np.random.randint(0, 4096, (50, 50, 3), dtype=np.uint16)
         jpeg_12bit = jpeg_instance.encode_12bit(img_12bit)
-        _, _, _, _, precision = jpeg_instance.decode_header(jpeg_12bit)
+        _, _, _, _, precision = jpeg_instance.decode_header(jpeg_12bit, return_precision=True)
         assert precision == 12
         if precision == 12:
             decoded = jpeg_instance.decode_12bit(jpeg_12bit)
@@ -1707,7 +1715,7 @@ class TestHighPrecision:
         try:
             img_16bit = np.random.randint(0, 65536, (50, 50, 3), dtype=np.uint16)
             jpeg_16bit = jpeg_instance.encode_16bit(img_16bit)
-            _, _, _, _, precision = jpeg_instance.decode_header(jpeg_16bit)
+            _, _, _, _, precision = jpeg_instance.decode_header(jpeg_16bit, return_precision=True)
             assert precision == 16
             if precision == 16:
                 decoded = jpeg_instance.decode_16bit(jpeg_16bit)

@@ -530,22 +530,35 @@ class TurboJPEG(object):
             for i in range(num_scaling_factors.value)
         )
 
-    def decode_header(self, jpeg_buf):
+    def decode_header(self, jpeg_buf, return_precision=False):
         """decodes JPEG header and returns image properties as a tuple.
+        
+        Parameters
+        ----------
+        jpeg_buf : bytes
+            JPEG image data buffer
+        return_precision : bool, optional
+            If True, returns precision as 5th element in tuple (default: False)
         
         Returns
         -------
         tuple
-            (width, height, jpeg_subsample, jpeg_colorspace, precision)
+            By default: (width, height, jpeg_subsample, jpeg_colorspace)
+            With return_precision=True: (width, height, jpeg_subsample, jpeg_colorspace, precision)
+            
             - width: image width in pixels
             - height: image height in pixels
             - jpeg_subsample: chroma subsampling (TJSAMP_*)
             - jpeg_colorspace: colorspace (TJCS_*)
-            - precision: bit precision (8, 12, or 16)
+            - precision: bit precision (8, 12, or 16) - only when return_precision=True
         
         Example
         -------
-        >>> width, height, subsample, colorspace, precision = jpeg.decode_header(jpeg_data)
+        >>> # Standard usage (backward compatible)
+        >>> width, height, subsample, colorspace = jpeg.decode_header(jpeg_data)
+        >>> 
+        >>> # Get precision to select decode function
+        >>> width, height, subsample, colorspace, precision = jpeg.decode_header(jpeg_data, return_precision=True)
         >>> if precision == 8:
         ...     img = jpeg.decode(jpeg_data)
         ... elif precision == 12:
@@ -565,11 +578,17 @@ class TurboJPEG(object):
             height = self.__get(handle, TJPARAM_JPEGHEIGHT)
             jpeg_subsample = self.__get(handle, TJPARAM_SUBSAMP)
             jpeg_colorspace = self.__get(handle, TJPARAM_COLORSPACE)
-            precision = self.__get(handle, TJPARAM_PRECISION)
             # Check for errors (tj3Get returns -1 on error)
-            if width < 0 or height < 0 or jpeg_subsample < 0 or jpeg_colorspace < 0 or precision < 0:
+            if width < 0 or height < 0 or jpeg_subsample < 0 or jpeg_colorspace < 0:
                 self.__report_error(handle)
-            return (width, height, jpeg_subsample, jpeg_colorspace, precision)
+            
+            if return_precision:
+                precision = self.__get(handle, TJPARAM_PRECISION)
+                if precision < 0:
+                    self.__report_error(handle)
+                return (width, height, jpeg_subsample, jpeg_colorspace, precision)
+            else:
+                return (width, height, jpeg_subsample, jpeg_colorspace)
         finally:
             self.__destroy(handle)
 
