@@ -39,7 +39,8 @@ from turbojpeg import (
 @pytest.fixture(scope='module')
 def jpeg_instance():
     """Create a TurboJPEG instance for testing."""
-    return TurboJPEG()
+    lib_path = os.environ.get('TURBOJPEG_LIB_PATH', None)
+    return TurboJPEG(lib_path=lib_path)
 
 
 @pytest.fixture(scope='module')

@@ -490,24 +490,34 @@ class TurboJPEG(object):
             c_void_p, POINTER(c_ubyte), c_size_t, POINTER(c_ushort), c_int, c_int]
         self.__decompress16.restype = c_int
         
-        # tj3CompressFromYUV16 - compress 16-bit YUV to JPEG
-        self.__compressFromYUV16 = turbo_jpeg.tj3CompressFromYUV16
-        self.__compressFromYUV16.argtypes = [
-            c_void_p, POINTER(c_ushort), c_int, c_int, c_int,
-            POINTER(c_void_p), POINTER(c_size_t)]
-        self.__compressFromYUV16.restype = c_int
+        # tj3CompressFromYUV16 - compress 16-bit YUV to JPEG (TurboJPEG 3.1+)
+        # These functions may not be available in all TurboJPEG 3.x versions
+        try:
+            self.__compressFromYUV16 = turbo_jpeg.tj3CompressFromYUV16
+            self.__compressFromYUV16.argtypes = [
+                c_void_p, POINTER(c_ushort), c_int, c_int, c_int,
+                POINTER(c_void_p), POINTER(c_size_t)]
+            self.__compressFromYUV16.restype = c_int
+        except AttributeError:
+            self.__compressFromYUV16 = None
         
-        # tj3DecompressToYUV16 - decompress JPEG to 16-bit YUV
-        self.__decompressToYUV16 = turbo_jpeg.tj3DecompressToYUV16
-        self.__decompressToYUV16.argtypes = [
-            c_void_p, POINTER(c_ubyte), c_size_t, POINTER(c_ushort), c_int]
-        self.__decompressToYUV16.restype = c_int
+        # tj3DecompressToYUV16 - decompress JPEG to 16-bit YUV (TurboJPEG 3.1+)
+        try:
+            self.__decompressToYUV16 = turbo_jpeg.tj3DecompressToYUV16
+            self.__decompressToYUV16.argtypes = [
+                c_void_p, POINTER(c_ubyte), c_size_t, POINTER(c_ushort), c_int]
+            self.__decompressToYUV16.restype = c_int
+        except AttributeError:
+            self.__decompressToYUV16 = None
         
-        # tj3DecompressToYUVPlanes16 - decompress JPEG to 16-bit YUV planes
-        self.__decompressToYUVPlanes16 = turbo_jpeg.tj3DecompressToYUVPlanes16
-        self.__decompressToYUVPlanes16.argtypes = [
-            c_void_p, POINTER(c_ubyte), c_size_t, POINTER(POINTER(c_ushort)), POINTER(c_int)]
-        self.__decompressToYUVPlanes16.restype = c_int
+        # tj3DecompressToYUVPlanes16 - decompress JPEG to 16-bit YUV planes (TurboJPEG 3.1+)
+        try:
+            self.__decompressToYUVPlanes16 = turbo_jpeg.tj3DecompressToYUVPlanes16
+            self.__decompressToYUVPlanes16.argtypes = [
+                c_void_p, POINTER(c_ubyte), c_size_t, POINTER(POINTER(c_ushort)), POINTER(c_int)]
+            self.__decompressToYUVPlanes16.restype = c_int
+        except AttributeError:
+            self.__decompressToYUVPlanes16 = None
 
         # tjGetScalingFactors - still the current API in 3.1.x
         get_scaling_factors = turbo_jpeg.tjGetScalingFactors
@@ -572,9 +582,9 @@ class TurboJPEG(object):
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
             # Set decompression parameters using tj3Set
-            if precision != 8:
-                if self.__set(handle, TJPARAM_PRECISION, precision) != 0:
-                    self.__report_error(handle)
+            # NOTE: TJPARAM_PRECISION is read-only for decompression - it's determined
+            # from the JPEG header. The precision parameter here just selects which
+            # decompress function to use (tj3Decompress8/12/16).
             if flags & TJFLAG_BOTTOMUP:
                 self.__set(handle, TJPARAM_BOTTOMUP, 1)
             if flags & TJFLAG_FASTUPSAMPLE:
@@ -720,9 +730,8 @@ class TurboJPEG(object):
         handle = self.__init(TJINIT_COMPRESS)
         try:
             # Set compression parameters using tj3Set
-            if precision != 8:
-                if self.__set(handle, TJPARAM_PRECISION, precision) != 0:
-                    self.__report_error(handle)
+            # NOTE: TJPARAM_PRECISION is not set for compression - the precision is 
+            # determined by which compress function is used (tj3Compress8/12/16)
             if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
                 self.__report_error(handle)
             if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
