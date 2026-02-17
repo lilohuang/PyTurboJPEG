@@ -776,7 +776,8 @@ class TurboJPEG(object):
                 # 12-bit or 16-bit precision
                 src_addr = self.__getaddr_uint16(img_array)
                 # For 12/16-bit, stride is in samples (uint16), not bytes
-                stride_samples = img_array.strides[0] // 2  # Convert bytes to uint16 count
+                # Note: uint16 is 2 bytes on all supported platforms
+                stride_samples = img_array.strides[0] // 2  # Convert bytes to uint16 count (2 bytes per uint16)
                 
                 if precision == 12:
                     status = self.__compress12(
