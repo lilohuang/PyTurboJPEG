@@ -82,7 +82,15 @@ with open('input.jpg', 'rb') as f:
 ```python
 # Get image properties without full decoding
 with open('input.jpg', 'rb') as f:
-    width, height, jpeg_subsample, jpeg_colorspace = jpeg.decode_header(f.read())
+    width, height, jpeg_subsample, jpeg_colorspace, precision = jpeg.decode_header(f.read())
+
+# Use precision to select appropriate decode function
+if precision == 8:
+    img = jpeg.decode(jpeg_data)
+elif precision == 12:
+    img = jpeg.decode_12bit(jpeg_data)
+elif precision == 16:
+    img = jpeg.decode_16bit(jpeg_data)
 ```
 
 ### YUV Decoding
