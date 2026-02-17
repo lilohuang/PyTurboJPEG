@@ -130,6 +130,10 @@ with open('output_quality_50.jpg', 'wb') as f:
 # Encode with progressive entropy coding
 with open('output_progressive.jpg', 'wb') as f:
     f.write(jpeg.encode(bgr_array, quality=100, flags=TJFLAG_PROGRESSIVE))
+
+# Encode with lossless JPEG compression
+with open('output_gray.jpg', 'wb') as f:
+    f.write(jpeg.encode(bgr_array, lossless=True))
 ```
 
 ### Advanced Operations
