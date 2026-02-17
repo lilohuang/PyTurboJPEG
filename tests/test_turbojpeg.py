@@ -1316,7 +1316,7 @@ def check_16bit_support(jpeg_instance):
         img = np.full((2, 2, 3), 100, dtype=np.uint16)
         jpeg_instance.encode_16bit(img)
         return True
-    except (IOError, OSError):
+    except (IOError, OSError, NotImplementedError):
         return False
 
 

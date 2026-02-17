@@ -718,14 +718,32 @@ class TurboJPEG(object):
             Destination buffer (optional)
         precision : int
             Precision level (8, 12, or 16 bits)
+            Note: 16-bit precision is only supported for lossless JPEG compression.
             
         Returns
         -------
         bytes
             JPEG image data
+            
+        Raises
+        ------
+        ValueError
+            If precision is not 8, 12, or 16
+        NotImplementedError
+            If attempting to encode 16-bit lossy JPEG (not supported by JPEG standard)
         """
         if precision not in [8, 12, 16]:
             raise ValueError('precision must be 8, 12, or 16')
+        
+        # 16-bit precision is only supported for lossless JPEG
+        # The JPEG standard does not support 16-bit lossy compression
+        if precision == 16:
+            raise NotImplementedError(
+                '16-bit lossy JPEG compression is not supported by the JPEG standard. '
+                '16-bit precision is only available for lossless JPEG compression, '
+                'which is not currently exposed in this API. '
+                'Use 12-bit precision for lossy high-precision JPEG encoding.'
+            )
         
         handle = self.__init(TJINIT_COMPRESS)
         try:
@@ -889,12 +907,17 @@ class TurboJPEG(object):
     def encode_16bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0):
         """Encodes 16-bit numpy array (uint16) to JPEG memory buffer.
         
+        **Note:** 16-bit precision is only supported for lossless JPEG compression
+        in the JPEG standard. This method is currently not functional for lossy
+        JPEG compression and will raise NotImplementedError. Use encode_12bit()
+        for high-precision lossy JPEG encoding instead.
+        
         Parameters
         ----------
         img_array : ndarray
             16-bit image data (uint16, values 0-65535)
         quality : int
-            JPEG quality (1-100)
+            JPEG quality (1-100) - only applicable for lossless mode
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         jpeg_subsample : int
@@ -906,6 +929,11 @@ class TurboJPEG(object):
         -------
         bytes
             JPEG image data
+            
+        Raises
+        ------
+        NotImplementedError
+            16-bit lossy JPEG is not supported by the JPEG standard
         """
         return self.encode(img_array, quality=quality, pixel_format=pixel_format, 
                           jpeg_subsample=jpeg_subsample, flags=flags, precision=16)
@@ -935,10 +963,15 @@ class TurboJPEG(object):
     def decode_16bit(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0):
         """Decodes JPEG memory buffer to 16-bit numpy array (uint16).
         
+        **Note:** This method can only decode lossless 16-bit JPEG images.
+        Since 16-bit lossy JPEG is not supported by the JPEG standard,
+        attempting to decode a lossy JPEG with this method will fail.
+        Use decode_12bit() for high-precision lossy JPEG decoding.
+        
         Parameters
         ----------
         jpeg_buf : bytes
-            JPEG image data to decode
+            JPEG image data to decode (must be a lossless 16-bit JPEG)
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         scaling_factor : tuple or None
@@ -950,6 +983,11 @@ class TurboJPEG(object):
         -------
         ndarray
             16-bit image as uint16 numpy array (values 0-65535)
+            
+        Raises
+        ------
+        IOError or OSError
+            If the JPEG is not a lossless 16-bit image
         """
         return self.decode(jpeg_buf, pixel_format=pixel_format, 
                           scaling_factor=scaling_factor, flags=flags, precision=16)

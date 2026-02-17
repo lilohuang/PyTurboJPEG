@@ -200,13 +200,20 @@ cv2.waitKey(0)
 
 ## High-Precision JPEG Support
 
-PyTurboJPEG 2.0+ supports 12-bit and 16-bit precision JPEG encoding and decoding using TurboJPEG 3.0+ APIs. This feature is ideal for medical imaging, scientific photography, and other applications requiring higher bit depth.
+PyTurboJPEG 2.0+ supports 12-bit and 16-bit precision JPEG encoding and decoding using libjpeg-turbo 3.0+ APIs. This feature is ideal for medical imaging, scientific photography, and other applications requiring higher bit depth.
 
 **Requirements:**
-- **12-bit support:** Available in standard TurboJPEG 3.0+ builds
-- **16-bit support:** Requires a custom TurboJPEG build with `-DWITH_12BIT=1 -DWITH_16BIT=1` flags
+- libjpeg-turbo 3.0 or later (12-bit and 16-bit support is built-in)
 
-### 12-bit JPEG
+**Important Limitations:**
+- **12-bit JPEG:** Supports both lossy and lossless compression
+- **16-bit JPEG:** Only supports lossless compression (JPEG standard limitation)
+  - The `encode_16bit()` method will raise `NotImplementedError` as lossless mode is not yet exposed in this API
+  - Use `encode_12bit()` for high-precision lossy JPEG encoding
+
+### 12-bit JPEG (Lossy)
+
+12-bit JPEG provides higher precision than standard 8-bit JPEG while maintaining compatibility with lossy compression.
 
 ```python
 import numpy as np
@@ -232,33 +239,15 @@ with open('output_12bit.jpg', 'rb') as f:
     decoded_from_file = jpeg.decode_12bit(f.read())
 ```
 
-### 16-bit JPEG
+### 16-bit JPEG (Lossless Only - Not Yet Supported)
 
-```python
-import numpy as np
-from turbojpeg import TurboJPEG
+**Note:** 16-bit JPEG is only supported for lossless compression in the JPEG standard. Since lossless mode is not currently exposed in this API, 16-bit encoding is not available. Use 12-bit encoding for high-precision lossy JPEG compression.
 
-jpeg = TurboJPEG()
-
-# Create 16-bit image (values range from 0 to 65535)
-img_16bit = np.random.randint(0, 65536, (480, 640, 3), dtype=np.uint16)
-
-# Encode to 16-bit JPEG
-jpeg_data = jpeg.encode_16bit(img_16bit, quality=95)
-
-# Decode from 16-bit JPEG
-decoded_img = jpeg.decode_16bit(jpeg_data)
-
-# Save to file
-with open('output_16bit.jpg', 'wb') as f:
-    f.write(jpeg_data)
-
-# Load from file
-with open('output_16bit.jpg', 'rb') as f:
-    decoded_from_file = jpeg.decode_16bit(f.read())
-```
+The JPEG standard does not support 16-bit lossy compression. If you need lossless 16-bit JPEG support, please open an issue on the GitHub repository.
 
 ### Medical and Scientific Imaging
+
+For medical and scientific applications, 12-bit JPEG provides excellent precision while maintaining file size efficiency:
 
 ```python
 import numpy as np

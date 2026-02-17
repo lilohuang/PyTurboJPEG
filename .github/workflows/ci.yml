@@ -7,8 +7,8 @@ on:
     branches: [ main, master ]
 
 jobs:
-  test-high-precision:
-    name: Test with 12-bit and 16-bit support
+  test:
+    name: Test with libjpeg-turbo 3.1.3
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -31,53 +31,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y cmake nasm
     
-    - name: Install libjpeg-turbo 3.1.3 from source with 12-bit and 16-bit support
-      run: |
-        cd /tmp
-        wget -q https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-3.1.3.tar.gz
-        tar -xzf libjpeg-turbo-3.1.3.tar.gz
-        cd libjpeg-turbo-3.1.3
-        mkdir build
-        cd build
-        cmake -DCMAKE_INSTALL_PREFIX=/usr/local ..
-        make -j$(nproc)
-        sudo make install
-        sudo ldconfig
-    
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install numpy pytest pytest-memray
-    
-    - name: Run tests
-      run: |
-        pytest tests/ -v
-
-  test-standard-8bit:
-    name: Test standard 8-bit (backward compatibility)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        allow-prereleases: true
-    
-    - name: Install build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake nasm
-    
-    - name: Install libjpeg-turbo 3.1.3 from source (standard 8-bit)
+    - name: Install libjpeg-turbo 3.1.3 from source
       run: |
         cd /tmp
         wget -q https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-3.1.3.tar.gz
