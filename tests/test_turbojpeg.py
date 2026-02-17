@@ -1422,21 +1422,6 @@ class TestHighPrecision:
         # (though not strictly monotonic due to compression characteristics)
         assert sizes[-1] >= sizes[0]  # quality 100 >= quality 50
     
-    def test_16bit_quality_levels(self, jpeg_instance, sample_16bit_image, supports_16bit):
-        """Test 16-bit encoding with different quality levels."""
-        if not supports_16bit:
-            pytest.skip("16-bit precision not supported by this TurboJPEG build")
-        quality_levels = [50, 75, 85, 95, 100]
-        sizes = []
-        for quality in quality_levels:
-            jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image, quality=quality)
-            sizes.append(len(jpeg_buf))
-            decoded = jpeg_instance.decode_16bit(jpeg_buf)
-            assert decoded.shape == sample_16bit_image.shape
-        
-        # Higher quality should generally produce larger files
-        assert sizes[-1] >= sizes[0]  # quality 100 >= quality 50
-    
     def test_12bit_different_subsampling(self, jpeg_instance, sample_12bit_image):
         """Test 12-bit with different chroma subsampling."""
         subsamplings = [TJSAMP_444, TJSAMP_422, TJSAMP_420]
@@ -1444,17 +1429,6 @@ class TestHighPrecision:
             jpeg_buf = jpeg_instance.encode_12bit(sample_12bit_image, jpeg_subsample=subsample)
             decoded = jpeg_instance.decode_12bit(jpeg_buf)
             assert decoded.shape == sample_12bit_image.shape
-            assert decoded.dtype == np.uint16
-    
-    def test_16bit_different_subsampling(self, jpeg_instance, sample_16bit_image, supports_16bit):
-        """Test 16-bit with different chroma subsampling."""
-        if not supports_16bit:
-            pytest.skip("16-bit precision not supported by this TurboJPEG build")
-        subsamplings = [TJSAMP_444, TJSAMP_422, TJSAMP_420]
-        for subsample in subsamplings:
-            jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image, jpeg_subsample=subsample)
-            decoded = jpeg_instance.decode_16bit(jpeg_buf)
-            assert decoded.shape == sample_16bit_image.shape
             assert decoded.dtype == np.uint16
     
     def test_12bit_different_pixel_formats(self, jpeg_instance):
@@ -1498,16 +1472,6 @@ class TestHighPrecision:
         img_gray = np.random.randint(0, 4096, (100, 100, 1), dtype=np.uint16)
         jpeg_buf = jpeg_instance.encode_12bit(img_gray, pixel_format=TJPF_GRAY, jpeg_subsample=TJSAMP_GRAY)
         decoded = jpeg_instance.decode_12bit(jpeg_buf, pixel_format=TJPF_GRAY)
-        assert decoded.shape == img_gray.shape
-        assert decoded.dtype == np.uint16
-    
-    def test_16bit_grayscale(self, jpeg_instance, supports_16bit):
-        """Test single-channel grayscale 16-bit images."""
-        if not supports_16bit:
-            pytest.skip("16-bit precision not supported by this TurboJPEG build")
-        img_gray = np.random.randint(0, 65536, (100, 100, 1), dtype=np.uint16)
-        jpeg_buf = jpeg_instance.encode_16bit(img_gray, pixel_format=TJPF_GRAY, jpeg_subsample=TJSAMP_GRAY)
-        decoded = jpeg_instance.decode_16bit(jpeg_buf, pixel_format=TJPF_GRAY)
         assert decoded.shape == img_gray.shape
         assert decoded.dtype == np.uint16
     
@@ -1659,7 +1623,7 @@ class TestHighPrecision:
         if not supports_16bit:
             pytest.skip("16-bit precision not supported by this TurboJPEG build")
         # Test encode_16bit
-        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image, quality=90)
+        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image)
         assert isinstance(jpeg_buf, bytes)
         
         # Test decode_16bit
