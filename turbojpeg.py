@@ -707,7 +707,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None):
+    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None, lossless=False):
         """encodes numpy array to JPEG memory buffer.
         
         Parameters
@@ -715,28 +715,41 @@ class TurboJPEG(object):
         img_array : ndarray
             Image data to encode (uint8)
         quality : int
-            JPEG quality (1-100)
+            JPEG quality (1-100) - ignored if lossless=True
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         jpeg_subsample : int
-            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.)
+            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.) - ignored if lossless=True
         flags : int
             Compression flags
         dst : buffer or None
             Destination buffer (optional)
+        lossless : bool
+            Enable lossless JPEG compression (default: False)
+            When True, provides perfect reconstruction with larger file sizes.
+            Note: quality and jpeg_subsample parameters are ignored in lossless mode;
+            subsampling is automatically set to 4:4:4 by the library.
             
         Returns
         -------
         bytes
-            JPEG image data
+            JPEG image data (lossy or lossless depending on lossless parameter)
         """
         handle = self.__init(TJINIT_COMPRESS)
         try:
             # Set compression parameters using tj3Set
-            if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
-                self.__report_error(handle)
-            if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
-                self.__report_error(handle)
+            # Enable lossless mode if requested
+            if lossless:
+                if self.__set(handle, TJPARAM_LOSSLESS, 1) != 0:
+                    self.__report_error(handle)
+                # In lossless mode, subsampling is automatically set to 4:4:4
+                # and quality parameter is ignored
+            else:
+                # Set standard lossy parameters
+                if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
+                    self.__report_error(handle)
+                if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
+                    self.__report_error(handle)
             if flags & TJFLAG_PROGRESSIVE:
                 if self.__set(handle, TJPARAM_PROGRESSIVE, 1) != 0:
                     self.__report_error(handle)
