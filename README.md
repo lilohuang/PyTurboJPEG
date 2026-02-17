@@ -205,11 +205,9 @@ PyTurboJPEG 2.0+ supports 12-bit and 16-bit precision JPEG encoding and decoding
 **Requirements:**
 - libjpeg-turbo 3.0 or later (12-bit and 16-bit support is built-in)
 
-**Important Limitations:**
+**Precision Modes:**
 - **12-bit JPEG:** Supports both lossy and lossless compression
 - **16-bit JPEG:** Only supports lossless compression (JPEG standard limitation)
-  - The `encode_16bit()` method will raise `NotImplementedError` as lossless mode is not yet exposed in this API
-  - Use `encode_12bit()` for high-precision lossy JPEG encoding
 
 ### 12-bit JPEG (Lossy)
 
@@ -224,7 +222,7 @@ jpeg = TurboJPEG()
 # Create 12-bit image (values range from 0 to 4095)
 img_12bit = np.random.randint(0, 4096, (480, 640, 3), dtype=np.uint16)
 
-# Encode to 12-bit JPEG
+# Encode to 12-bit lossy JPEG
 jpeg_data = jpeg.encode_12bit(img_12bit, quality=95)
 
 # Decode from 12-bit JPEG
@@ -239,11 +237,59 @@ with open('output_12bit.jpg', 'rb') as f:
     decoded_from_file = jpeg.decode_12bit(f.read())
 ```
 
-### 16-bit JPEG (Lossless Only - Not Yet Supported)
+### 16-bit JPEG (Lossless)
 
-**Note:** 16-bit JPEG is only supported for lossless compression in the JPEG standard. Since lossless mode is not currently exposed in this API, 16-bit encoding is not available. Use 12-bit encoding for high-precision lossy JPEG compression.
+16-bit JPEG provides the highest precision with perfect reconstruction through lossless compression. The JPEG standard only supports 16-bit for lossless mode.
 
-The JPEG standard does not support 16-bit lossy compression. If you need lossless 16-bit JPEG support, please open an issue on the GitHub repository.
+```python
+import numpy as np
+from turbojpeg import TurboJPEG
+
+jpeg = TurboJPEG()
+
+# Create 16-bit image (values range from 0 to 65535)
+img_16bit = np.random.randint(0, 65536, (480, 640, 3), dtype=np.uint16)
+
+# Encode to 16-bit lossless JPEG
+jpeg_data = jpeg.encode_16bit(img_16bit)
+
+# Decode from 16-bit lossless JPEG
+decoded_img = jpeg.decode_16bit(jpeg_data)
+
+# Verify perfect reconstruction (lossless)
+assert np.array_equal(img_16bit, decoded_img)  # True
+
+# Save to file
+with open('output_16bit_lossless.jpg', 'wb') as f:
+    f.write(jpeg_data)
+
+# Load from file
+with open('output_16bit_lossless.jpg', 'rb') as f:
+    decoded_from_file = jpeg.decode_16bit(f.read())
+```
+
+### 12-bit Lossless JPEG
+
+You can also use 12-bit precision with lossless compression:
+
+```python
+import numpy as np
+from turbojpeg import TurboJPEG
+
+jpeg = TurboJPEG()
+
+# Create 12-bit image
+img_12bit = np.random.randint(0, 4096, (480, 640, 3), dtype=np.uint16)
+
+# Encode to 12-bit lossless JPEG
+jpeg_data = jpeg.encode(img_12bit, precision=12, lossless=True)
+
+# Decode
+decoded_img = jpeg.decode(jpeg_data, precision=12)
+
+# Perfect reconstruction
+assert np.array_equal(img_12bit, decoded_img)  # True
+```
 
 ### Medical and Scientific Imaging
 

@@ -1310,13 +1310,15 @@ class TestCropFunctionality:
 
 
 def check_16bit_support(jpeg_instance):
-    """Check if TurboJPEG library supports 16-bit precision."""
+    """Check if TurboJPEG library supports 16-bit lossless precision."""
     try:
-        # Try encoding a tiny 16-bit image
+        # Try encoding a tiny 16-bit image in lossless mode
         img = np.full((2, 2, 3), 100, dtype=np.uint16)
-        jpeg_instance.encode_16bit(img)
+        jpeg_buf = jpeg_instance.encode_16bit(img)
+        # Try decoding it back
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
         return True
-    except (IOError, OSError, NotImplementedError):
+    except (IOError, OSError, NotImplementedError, ValueError) as e:
         return False
 
 
@@ -1582,7 +1584,7 @@ class TestHighPrecision:
         # If 16-bit is supported, test it
         if supports_16bit:
             img_16bit = (sample_12bit_image * 16).astype(np.uint16)  # Upscale to 16-bit range
-            jpeg_buf_16 = jpeg_instance.encode(img_16bit, precision=16)
+            jpeg_buf_16 = jpeg_instance.encode(img_16bit, precision=16, lossless=True)
             decoded_16bit = jpeg_instance.decode(jpeg_buf_16, precision=16)
             assert decoded_16bit.dtype == np.uint16
             assert decoded_16bit.shape == img_16bit.shape
