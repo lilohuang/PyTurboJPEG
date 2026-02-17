@@ -709,7 +709,7 @@ class TurboJPEG(object):
             
             # Validate dtype is uint8
             if img_array.dtype != np.uint8:
-                raise ValueError('encode() requires uint8 array; use encode_12bit() or encode_16bit() for higher precision')
+                raise ValueError('encode() requires uint8 array (values 0-255); use encode_12bit() for 12-bit images (uint16, 0-4095) or encode_16bit() for 16-bit images (uint16, 0-65535)')
             
             if dst is not None and not self.__is_buffer(dst):
                 raise TypeError('\'dst\' argument must support buffer protocol')
@@ -856,7 +856,7 @@ class TurboJPEG(object):
             
             # Validate dtype is uint16 for 12-bit precision
             if img_array.dtype != np.uint16:
-                raise ValueError('img_array must be uint16 for 12-bit encoding; values should be in range 0-4095')
+                raise ValueError('encode_12bit() requires uint16 array with values in range 0-4095')
             
             jpeg_buf = c_void_p()
             jpeg_size = c_size_t()
@@ -921,7 +921,7 @@ class TurboJPEG(object):
             
             # Validate dtype is uint16 for 16-bit precision
             if img_array.dtype != np.uint16:
-                raise ValueError('img_array must be uint16 for 16-bit encoding; values should be in range 0-65535')
+                raise ValueError('encode_16bit() requires uint16 array with values in range 0-65535')
             
             jpeg_buf = c_void_p()
             jpeg_size = c_size_t()

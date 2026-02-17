@@ -1534,7 +1534,7 @@ class TestHighPrecision:
         """Test error handling for wrong dtype in 12-bit methods."""
         # Test that encode_12bit requires uint16
         img_uint8 = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
-        with pytest.raises(ValueError, match='img_array must be uint16 for 12-bit encoding'):
+        with pytest.raises(ValueError, match='encode_12bit\\(\\) requires uint16 array'):
             jpeg_instance.encode_12bit(img_uint8)
     
     def test_16bit_invalid_precision_parameter(self, jpeg_instance, sample_16bit_image, supports_16bit):
@@ -1543,13 +1543,13 @@ class TestHighPrecision:
             pytest.skip("16-bit precision not supported by this TurboJPEG build")
         # Test that encode_16bit requires uint16
         img_uint8 = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
-        with pytest.raises(ValueError, match='img_array must be uint16 for 16-bit encoding'):
+        with pytest.raises(ValueError, match='encode_16bit\\(\\) requires uint16 array'):
             jpeg_instance.encode_16bit(img_uint8)
     
     def test_12bit_wrong_dtype_input(self, jpeg_instance):
         """Test error when uint8 is passed for 12-bit encoding."""
         img_uint8 = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
-        with pytest.raises(ValueError, match='img_array must be uint16 for 12-bit encoding'):
+        with pytest.raises(ValueError, match='encode_12bit\\(\\) requires uint16 array'):
             jpeg_instance.encode_12bit(img_uint8)
     
     def test_16bit_wrong_dtype_input(self, jpeg_instance, supports_16bit):
@@ -1557,7 +1557,7 @@ class TestHighPrecision:
         if not supports_16bit:
             pytest.skip("16-bit precision not supported by this TurboJPEG build")
         img_uint8 = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
-        with pytest.raises(ValueError, match='img_array must be uint16 for 16-bit encoding'):
+        with pytest.raises(ValueError, match='encode_16bit\\(\\) requires uint16 array'):
             jpeg_instance.encode_16bit(img_uint8)
     
     def test_mixed_precision_encode_decode(self, jpeg_instance, sample_12bit_image, supports_16bit):
