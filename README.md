@@ -200,13 +200,18 @@ cv2.waitKey(0)
 
 ## High-Precision JPEG Support
 
-PyTurboJPEG 2.0+ supports 12-bit and 16-bit precision JPEG encoding and decoding using TurboJPEG 3.0+ APIs. This feature is ideal for medical imaging, scientific photography, and other applications requiring higher bit depth.
+PyTurboJPEG 2.0+ supports 12-bit and 16-bit precision JPEG encoding and decoding using libjpeg-turbo 3.0+ APIs. This feature is ideal for medical imaging, scientific photography, and other applications requiring higher bit depth.
 
 **Requirements:**
-- **12-bit support:** Available in standard TurboJPEG 3.0+ builds
-- **16-bit support:** Requires a custom TurboJPEG build with `-DWITH_12BIT=1 -DWITH_16BIT=1` flags
+- libjpeg-turbo 3.0 or later (12-bit and 16-bit support is built-in)
 
-### 12-bit JPEG
+**Precision Modes:**
+- **12-bit JPEG:** Supports both lossy and lossless compression
+- **16-bit JPEG:** Only supports lossless compression (JPEG standard limitation)
+
+### 12-bit JPEG (Lossy)
+
+12-bit JPEG provides higher precision than standard 8-bit JPEG while maintaining compatibility with lossy compression.
 
 ```python
 import numpy as np
@@ -217,7 +222,7 @@ jpeg = TurboJPEG()
 # Create 12-bit image (values range from 0 to 4095)
 img_12bit = np.random.randint(0, 4096, (480, 640, 3), dtype=np.uint16)
 
-# Encode to 12-bit JPEG
+# Encode to 12-bit lossy JPEG
 jpeg_data = jpeg.encode_12bit(img_12bit, quality=95)
 
 # Decode from 12-bit JPEG
@@ -232,7 +237,9 @@ with open('output_12bit.jpg', 'rb') as f:
     decoded_from_file = jpeg.decode_12bit(f.read())
 ```
 
-### 16-bit JPEG
+### 16-bit JPEG (Lossless)
+
+16-bit JPEG provides the highest precision with perfect reconstruction through lossless compression. The JPEG standard only supports 16-bit for lossless mode.
 
 ```python
 import numpy as np
@@ -243,22 +250,77 @@ jpeg = TurboJPEG()
 # Create 16-bit image (values range from 0 to 65535)
 img_16bit = np.random.randint(0, 65536, (480, 640, 3), dtype=np.uint16)
 
-# Encode to 16-bit JPEG
-jpeg_data = jpeg.encode_16bit(img_16bit, quality=95)
+# Encode to 16-bit lossless JPEG
+jpeg_data = jpeg.encode_16bit(img_16bit)
 
-# Decode from 16-bit JPEG
+# Decode from 16-bit lossless JPEG
 decoded_img = jpeg.decode_16bit(jpeg_data)
 
+# Verify perfect reconstruction (lossless)
+assert np.array_equal(img_16bit, decoded_img)  # True
+
 # Save to file
-with open('output_16bit.jpg', 'wb') as f:
+with open('output_16bit_lossless.jpg', 'wb') as f:
     f.write(jpeg_data)
 
 # Load from file
-with open('output_16bit.jpg', 'rb') as f:
+with open('output_16bit_lossless.jpg', 'rb') as f:
     decoded_from_file = jpeg.decode_16bit(f.read())
 ```
 
+### Lossless JPEG for All Precisions
+
+All precision levels (8-bit, 12-bit, 16-bit) support lossless compression for perfect reconstruction:
+
+#### 8-bit Lossless JPEG
+```python
+import numpy as np
+from turbojpeg import TurboJPEG
+
+jpeg = TurboJPEG()
+
+# Create 8-bit image
+img_8bit = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
+
+# Encode to 8-bit lossless JPEG
+jpeg_data = jpeg.encode(img_8bit, precision=8, lossless=True)
+
+# Decode
+decoded_img = jpeg.decode(jpeg_data, precision=8)
+
+# Perfect reconstruction
+assert np.array_equal(img_8bit, decoded_img)  # True
+```
+
+#### 12-bit Lossless JPEG
+
+12-bit precision with lossless compression can be achieved in two ways:
+
+```python
+import numpy as np
+from turbojpeg import TurboJPEG
+
+jpeg = TurboJPEG()
+
+# Create 12-bit image
+img_12bit = np.random.randint(0, 4096, (480, 640, 3), dtype=np.uint16)
+
+# Method 1: Using encode() with lossless=True
+jpeg_data = jpeg.encode(img_12bit, precision=12, lossless=True)
+
+# Method 2: Using encode_12bit() with lossless=True
+jpeg_data = jpeg.encode_12bit(img_12bit, lossless=True)
+
+# Decode
+decoded_img = jpeg.decode(jpeg_data, precision=12)
+
+# Perfect reconstruction
+assert np.array_equal(img_12bit, decoded_img)  # True
+```
+
 ### Medical and Scientific Imaging
+
+For medical and scientific applications, 12-bit JPEG provides excellent precision while maintaining file size efficiency:
 
 ```python
 import numpy as np

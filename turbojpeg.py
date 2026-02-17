@@ -699,7 +699,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None, precision=8):
+    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None, precision=8, lossless=False):
         """encodes numpy array to JPEG memory buffer.
         
         Parameters
@@ -707,22 +707,31 @@ class TurboJPEG(object):
         img_array : ndarray
             Image data to encode (uint8 for 8-bit, uint16 for 12/16-bit)
         quality : int
-            JPEG quality (1-100)
+            JPEG quality (1-100) - ignored for lossless mode
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         jpeg_subsample : int
-            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.)
+            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.) - ignored for lossless mode
         flags : int
             Compression flags
         dst : buffer or None
             Destination buffer (optional)
         precision : int
             Precision level (8, 12, or 16 bits)
+            Note: 16-bit precision requires lossless=True
+        lossless : bool
+            Enable lossless JPEG compression (default: False)
+            When True, quality and jpeg_subsample parameters are ignored
             
         Returns
         -------
         bytes
             JPEG image data
+            
+        Raises
+        ------
+        ValueError
+            If precision is not 8, 12, or 16, or if 16-bit is used without lossless=True
         """
         if precision not in [8, 12, 16]:
             raise ValueError('precision must be 8, 12, or 16')
@@ -730,12 +739,18 @@ class TurboJPEG(object):
         handle = self.__init(TJINIT_COMPRESS)
         try:
             # Set compression parameters using tj3Set
-            # NOTE: TJPARAM_PRECISION is not set for compression - the precision is 
-            # determined by which compress function is used (tj3Compress8/12/16)
-            if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
-                self.__report_error(handle)
-            if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
-                self.__report_error(handle)
+            # Enable lossless mode if requested
+            if lossless:
+                if self.__set(handle, TJPARAM_LOSSLESS, 1) != 0:
+                    self.__report_error(handle)
+                # In lossless mode, subsampling is automatically set to 4:4:4
+                # and quality parameter is ignored
+            else:
+                # Set standard lossy parameters
+                if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
+                    self.__report_error(handle)
+                if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
+                    self.__report_error(handle)
             if flags & TJFLAG_PROGRESSIVE:
                 if self.__set(handle, TJPARAM_PROGRESSIVE, 1) != 0:
                     self.__report_error(handle)
@@ -750,6 +765,14 @@ class TurboJPEG(object):
                 raise ValueError('img_array must be uint8 for 8-bit precision')
             elif precision in [12, 16] and img_array.dtype != np.uint16:
                 raise ValueError('img_array must be uint16 for 12/16-bit precision')
+            
+            # 16-bit precision requires lossless mode
+            if precision == 16 and not lossless:
+                raise ValueError(
+                    '16-bit precision requires lossless=True. '
+                    'The JPEG standard only supports 16-bit for lossless compression. '
+                    'Use encode_16bit() method or set lossless=True.'
+                )
             
             if dst is not None and not self.__is_buffer(dst):
                 raise TypeError('\'dst\' argument must support buffer protocol')
@@ -862,7 +885,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
     
-    def encode_12bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0):
+    def encode_12bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, lossless=False):
         """Encodes 12-bit numpy array (uint16) to JPEG memory buffer.
         
         Parameters
@@ -870,45 +893,52 @@ class TurboJPEG(object):
         img_array : ndarray
             12-bit image data (uint16, values 0-4095)
         quality : int
-            JPEG quality (1-100)
+            JPEG quality (1-100) - ignored if lossless=True
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         jpeg_subsample : int
-            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.)
+            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.) - ignored if lossless=True
         flags : int
             Compression flags
+        lossless : bool
+            Enable lossless JPEG compression (default: False)
+            When True, provides perfect reconstruction with larger file sizes
             
         Returns
         -------
         bytes
-            JPEG image data
+            JPEG image data (lossy or lossless depending on lossless parameter)
         """
         return self.encode(img_array, quality=quality, pixel_format=pixel_format, 
-                          jpeg_subsample=jpeg_subsample, flags=flags, precision=12)
+                          jpeg_subsample=jpeg_subsample, flags=flags, precision=12, lossless=lossless)
     
     def encode_16bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0):
-        """Encodes 16-bit numpy array (uint16) to JPEG memory buffer.
+        """Encodes 16-bit numpy array (uint16) to lossless JPEG memory buffer.
+        
+        **Note:** 16-bit precision requires lossless JPEG compression per the JPEG standard.
+        This method automatically enables lossless mode. The quality and jpeg_subsample
+        parameters are ignored in lossless mode.
         
         Parameters
         ----------
         img_array : ndarray
             16-bit image data (uint16, values 0-65535)
         quality : int
-            JPEG quality (1-100)
+            JPEG quality (1-100) - ignored in lossless mode
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         jpeg_subsample : int
-            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.)
+            Chroma subsampling - ignored in lossless mode (automatically 4:4:4)
         flags : int
             Compression flags
             
         Returns
         -------
         bytes
-            JPEG image data
+            Lossless JPEG image data
         """
         return self.encode(img_array, quality=quality, pixel_format=pixel_format, 
-                          jpeg_subsample=jpeg_subsample, flags=flags, precision=16)
+                          jpeg_subsample=jpeg_subsample, flags=flags, precision=16, lossless=True)
     
     def decode_12bit(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0):
         """Decodes JPEG memory buffer to 12-bit numpy array (uint16).
@@ -933,16 +963,19 @@ class TurboJPEG(object):
                           scaling_factor=scaling_factor, flags=flags, precision=12)
     
     def decode_16bit(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0):
-        """Decodes JPEG memory buffer to 16-bit numpy array (uint16).
+        """Decodes lossless 16-bit JPEG memory buffer to 16-bit numpy array (uint16).
+        
+        **Note:** This method decodes lossless 16-bit JPEG images created with encode_16bit().
+        The JPEG standard only supports 16-bit precision for lossless compression.
         
         Parameters
         ----------
         jpeg_buf : bytes
-            JPEG image data to decode
+            JPEG image data to decode (must be a lossless 16-bit JPEG)
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         scaling_factor : tuple or None
-            Scaling factor as (num, denom) tuple
+            Scaling factor as (num, denom) tuple (may not be supported for lossless)
         flags : int
             Decompression flags
             
@@ -950,6 +983,11 @@ class TurboJPEG(object):
         -------
         ndarray
             16-bit image as uint16 numpy array (values 0-65535)
+            
+        Raises
+        ------
+        IOError or OSError
+            If the JPEG is not a 16-bit lossless JPEG image
         """
         return self.decode(jpeg_buf, pixel_format=pixel_format, 
                           scaling_factor=scaling_factor, flags=flags, precision=16)

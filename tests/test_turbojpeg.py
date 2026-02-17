@@ -1310,13 +1310,15 @@ class TestCropFunctionality:
 
 
 def check_16bit_support(jpeg_instance):
-    """Check if TurboJPEG library supports 16-bit precision."""
+    """Check if TurboJPEG library supports 16-bit lossless precision."""
     try:
-        # Try encoding a tiny 16-bit image
+        # Try encoding a tiny 16-bit image in lossless mode
         img = np.full((2, 2, 3), 100, dtype=np.uint16)
-        jpeg_instance.encode_16bit(img)
+        jpeg_buf = jpeg_instance.encode_16bit(img)
+        # Try decoding it back
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
         return True
-    except (IOError, OSError):
+    except (IOError, OSError, NotImplementedError, ValueError) as e:
         return False
 
 
@@ -1582,7 +1584,7 @@ class TestHighPrecision:
         # If 16-bit is supported, test it
         if supports_16bit:
             img_16bit = (sample_12bit_image * 16).astype(np.uint16)  # Upscale to 16-bit range
-            jpeg_buf_16 = jpeg_instance.encode(img_16bit, precision=16)
+            jpeg_buf_16 = jpeg_instance.encode(img_16bit, precision=16, lossless=True)
             decoded_16bit = jpeg_instance.decode(jpeg_buf_16, precision=16)
             assert decoded_16bit.dtype == np.uint16
             assert decoded_16bit.shape == img_16bit.shape
@@ -1681,6 +1683,95 @@ class TestHighPrecision:
         assert height == sample_16bit_image.shape[0]
         assert subsample >= 0
         assert colorspace >= 0
+
+
+class TestLosslessJPEG:
+    """Tests for lossless JPEG compression across all precision levels."""
+    
+    def test_8bit_lossless_roundtrip(self, jpeg_instance):
+        """Test 8-bit lossless encoding provides perfect reconstruction."""
+        img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
+        jpeg_buf = jpeg_instance.encode(img, precision=8, lossless=True)
+        decoded = jpeg_instance.decode(jpeg_buf, precision=8)
+        assert np.array_equal(img, decoded), "8-bit lossless should provide perfect reconstruction"
+    
+    def test_12bit_lossless_roundtrip(self, jpeg_instance):
+        """Test 12-bit lossless encoding provides perfect reconstruction."""
+        img = np.random.randint(0, 4096, (100, 100, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode(img, precision=12, lossless=True)
+        decoded = jpeg_instance.decode(jpeg_buf, precision=12)
+        assert np.array_equal(img, decoded), "12-bit lossless should provide perfect reconstruction"
+    
+    def test_12bit_lossless_convenience_method(self, jpeg_instance):
+        """Test encode_12bit with lossless=True provides perfect reconstruction."""
+        img = np.random.randint(0, 4096, (100, 100, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_12bit(img, lossless=True)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf)
+        assert np.array_equal(img, decoded), "encode_12bit with lossless should provide perfect reconstruction"
+    
+    def test_16bit_lossless_roundtrip(self, jpeg_instance):
+        """Test 16-bit lossless encoding provides perfect reconstruction."""
+        img = np.random.randint(0, 65536, (100, 100, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_16bit(img)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
+        assert np.array_equal(img, decoded), "16-bit lossless should provide perfect reconstruction"
+    
+    def test_lossless_larger_than_lossy(self, jpeg_instance):
+        """Test that lossless encoding produces larger files than lossy."""
+        img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
+        lossy_buf = jpeg_instance.encode(img, precision=8, quality=95, lossless=False)
+        lossless_buf = jpeg_instance.encode(img, precision=8, lossless=True)
+        assert len(lossless_buf) > len(lossy_buf), "Lossless should be larger than lossy"
+    
+    def test_8bit_lossless_vs_lossy_reconstruction(self, jpeg_instance):
+        """Test that lossless provides perfect reconstruction while lossy does not."""
+        img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
+        
+        # Lossy encoding
+        lossy_buf = jpeg_instance.encode(img, precision=8, quality=95, lossless=False)
+        lossy_decoded = jpeg_instance.decode(lossy_buf, precision=8)
+        
+        # Lossless encoding
+        lossless_buf = jpeg_instance.encode(img, precision=8, lossless=True)
+        lossless_decoded = jpeg_instance.decode(lossless_buf, precision=8)
+        
+        # Lossless should be perfect, lossy should not (for most random images)
+        assert np.array_equal(img, lossless_decoded), "Lossless should provide perfect reconstruction"
+        # Note: lossy may occasionally match by chance with simple patterns, so we don't test inequality
+    
+    def test_12bit_lossless_edge_values(self, jpeg_instance):
+        """Test 12-bit lossless with edge values (0 and 4095)."""
+        img = np.zeros((50, 50, 3), dtype=np.uint16)
+        img[0:25, :, :] = 0
+        img[25:50, :, :] = 4095
+        jpeg_buf = jpeg_instance.encode_12bit(img, lossless=True)
+        decoded = jpeg_instance.decode_12bit(jpeg_buf)
+        assert np.array_equal(img, decoded), "12-bit lossless should preserve edge values"
+    
+    def test_16bit_lossless_edge_values(self, jpeg_instance):
+        """Test 16-bit lossless with edge values (0 and 65535)."""
+        img = np.zeros((50, 50, 3), dtype=np.uint16)
+        img[0:25, :, :] = 0
+        img[25:50, :, :] = 65535
+        jpeg_buf = jpeg_instance.encode_16bit(img)
+        decoded = jpeg_instance.decode_16bit(jpeg_buf)
+        assert np.array_equal(img, decoded), "16-bit lossless should preserve edge values"
+    
+    def test_lossless_different_pixel_formats(self, jpeg_instance):
+        """Test lossless encoding with different pixel formats."""
+        from turbojpeg import TJPF_RGB, TJPF_GRAY
+        
+        # RGB format
+        img_rgb = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
+        jpeg_rgb = jpeg_instance.encode(img_rgb, precision=8, pixel_format=TJPF_RGB, lossless=True)
+        decoded_rgb = jpeg_instance.decode(jpeg_rgb, precision=8, pixel_format=TJPF_RGB)
+        assert np.array_equal(img_rgb, decoded_rgb), "Lossless RGB should be perfect"
+        
+        # Grayscale format
+        img_gray = np.random.randint(0, 256, (50, 50, 1), dtype=np.uint8)
+        jpeg_gray = jpeg_instance.encode(img_gray, precision=8, pixel_format=TJPF_GRAY, lossless=True)
+        decoded_gray = jpeg_instance.decode(jpeg_gray, precision=8, pixel_format=TJPF_GRAY)
+        assert np.array_equal(img_gray, decoded_gray), "Lossless grayscale should be perfect"
 
 
 if __name__ == '__main__':
