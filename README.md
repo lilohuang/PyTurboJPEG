@@ -281,7 +281,7 @@ decoded_img = jpeg.decode_12bit(jpeg_data)
 assert np.array_equal(img_12bit, decoded_img)  # True
 ```
 
-### 16-bit Lossless JPEG
+#### 16-bit Lossless JPEG
 
 16-bit JPEG provides the highest precision with perfect reconstruction through lossless compression. The JPEG standard only supports 16-bit for lossless mode.
 
