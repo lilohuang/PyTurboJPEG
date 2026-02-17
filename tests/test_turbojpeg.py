@@ -1797,14 +1797,14 @@ class TestLosslessJPEG:
         
         # RGB format
         img_rgb = np.random.randint(0, 256, (50, 50, 3), dtype=np.uint8)
-        jpeg_rgb = jpeg_instance.encode(img_rgb, precision=8, pixel_format=TJPF_RGB, lossless=True)
-        decoded_rgb = jpeg_instance.decode(jpeg_rgb, precision=8, pixel_format=TJPF_RGB)
+        jpeg_rgb = jpeg_instance.encode(img_rgb, pixel_format=TJPF_RGB, lossless=True)
+        decoded_rgb = jpeg_instance.decode(jpeg_rgb, pixel_format=TJPF_RGB)
         assert np.array_equal(img_rgb, decoded_rgb), "Lossless RGB should be perfect"
         
         # Grayscale format
         img_gray = np.random.randint(0, 256, (50, 50, 1), dtype=np.uint8)
-        jpeg_gray = jpeg_instance.encode(img_gray, precision=8, pixel_format=TJPF_GRAY, lossless=True)
-        decoded_gray = jpeg_instance.decode(jpeg_gray, precision=8, pixel_format=TJPF_GRAY)
+        jpeg_gray = jpeg_instance.encode(img_gray, pixel_format=TJPF_GRAY, lossless=True)
+        decoded_gray = jpeg_instance.decode(jpeg_gray, pixel_format=TJPF_GRAY)
         assert np.array_equal(img_gray, decoded_gray), "Lossless grayscale should be perfect"
 
 
