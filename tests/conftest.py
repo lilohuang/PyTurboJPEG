@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 if 'TURBOJPEG_LIB_PATH' not in os.environ:
     common_paths = [
         '/opt/libjpeg-turbo/lib64/libturbojpeg.so',  # Official TurboJPEG package
+        '/usr/local/lib/libturbojpeg.so',            # CMake default installation
         '/usr/local/lib/libturbojpeg.so.0',          # Common Linux installation
         '/usr/lib/x86_64-linux-gnu/libturbojpeg.so.0',  # Debian/Ubuntu
     ]
