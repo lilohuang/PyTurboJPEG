@@ -532,7 +532,26 @@ class TurboJPEG(object):
 
     def decode_header(self, jpeg_buf):
         """decodes JPEG header and returns image properties as a tuple.
-           e.g. (width, height, jpeg_subsample, jpeg_colorspace)
+        
+        Returns
+        -------
+        tuple
+            (width, height, jpeg_subsample, jpeg_colorspace, precision)
+            - width: image width in pixels
+            - height: image height in pixels
+            - jpeg_subsample: chroma subsampling (TJSAMP_*)
+            - jpeg_colorspace: colorspace (TJCS_*)
+            - precision: bit precision (8, 12, or 16)
+        
+        Example
+        -------
+        >>> width, height, subsample, colorspace, precision = jpeg.decode_header(jpeg_data)
+        >>> if precision == 8:
+        >>>     img = jpeg.decode(jpeg_data)
+        >>> elif precision == 12:
+        >>>     img = jpeg.decode_12bit(jpeg_data)
+        >>> elif precision == 16:
+        >>>     img = jpeg.decode_16bit(jpeg_data)
         """
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
@@ -546,10 +565,11 @@ class TurboJPEG(object):
             height = self.__get(handle, TJPARAM_JPEGHEIGHT)
             jpeg_subsample = self.__get(handle, TJPARAM_SUBSAMP)
             jpeg_colorspace = self.__get(handle, TJPARAM_COLORSPACE)
+            precision = self.__get(handle, TJPARAM_PRECISION)
             # Check for errors (tj3Get returns -1 on error)
-            if width < 0 or height < 0 or jpeg_subsample < 0 or jpeg_colorspace < 0:
+            if width < 0 or height < 0 or jpeg_subsample < 0 or jpeg_colorspace < 0 or precision < 0:
                 self.__report_error(handle)
-            return (width, height, jpeg_subsample, jpeg_colorspace)
+            return (width, height, jpeg_subsample, jpeg_colorspace, precision)
         finally:
             self.__destroy(handle)
 
