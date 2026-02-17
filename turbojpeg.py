@@ -726,7 +726,9 @@ class TurboJPEG(object):
             Destination buffer (optional)
         lossless : bool
             Enable lossless JPEG compression (default: False)
-            When True, provides perfect reconstruction with larger file sizes
+            When True, provides perfect reconstruction with larger file sizes.
+            Note: quality and jpeg_subsample parameters are ignored in lossless mode;
+            subsampling is automatically set to 4:4:4 by the library.
             
         Returns
         -------
