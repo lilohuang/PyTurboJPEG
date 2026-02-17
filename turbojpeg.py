@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '2.0.0'
+__version__ = '2.1.0'
 
 from ctypes import *
 from ctypes.util import find_library
