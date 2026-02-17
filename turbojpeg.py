@@ -547,11 +547,11 @@ class TurboJPEG(object):
         -------
         >>> width, height, subsample, colorspace, precision = jpeg.decode_header(jpeg_data)
         >>> if precision == 8:
-        >>>     img = jpeg.decode(jpeg_data)
-        >>> elif precision == 12:
-        >>>     img = jpeg.decode_12bit(jpeg_data)
-        >>> elif precision == 16:
-        >>>     img = jpeg.decode_16bit(jpeg_data)
+        ...     img = jpeg.decode(jpeg_data)
+        ... elif precision == 12:
+        ...     img = jpeg.decode_12bit(jpeg_data)
+        ... elif precision == 16:
+        ...     img = jpeg.decode_16bit(jpeg_data)
         """
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
