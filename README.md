@@ -2,6 +2,11 @@
 
 A Python wrapper for libjpeg-turbo that enables efficient JPEG image decoding and encoding.
 
+[![PyPI Version](https://img.shields.io/pypi/v/pyturbojpeg.svg?style=flat-square&color=blue)](https://pypi.org/project/pyturbojpeg/)
+![Python Version](https://img.shields.io/badge/python-3.6+-blue?logo=python&logoColor=white)
+[![Downloads](https://img.shields.io/pypi/dm/pyturbojpeg.svg?style=flat-square&color=orange)](https://pypistats.org/packages/pyturbojpeg)
+[![License](https://img.shields.io/github/license/lilohuang/PyTurboJPEG.svg?style=flat-square)](https://github.com/lilohuang/PyTurboJPEG/blob/master/LICENSE)
+
 ## Prerequisites
 
 - [libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo/releases) **3.0 or later** (required for PyTurboJPEG 2.0+)
