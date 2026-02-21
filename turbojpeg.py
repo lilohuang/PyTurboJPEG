@@ -192,6 +192,7 @@ TJPARAM_YDENSITY = 21
 TJPARAM_DENSITYUNITS = 22
 TJPARAM_MAXPIXELS = 23
 TJPARAM_MAXMEMORY = 24
+TJPARAM_SAVEMARKERS = 25
 
 class CroppingRegion(Structure):
     _fields_ = [("x", c_int), ("y", c_int), ("w", c_int), ("h", c_int)]
@@ -519,6 +520,22 @@ class TurboJPEG(object):
         except AttributeError:
             self.__decompressToYUVPlanes16 = None
 
+        # tj3GetICCProfile - retrieve ICC profile from decompressor after header parsing (TurboJPEG 3.1+)
+        try:
+            self.__get_icc_profile = turbo_jpeg.tj3GetICCProfile
+            self.__get_icc_profile.argtypes = [c_void_p, POINTER(c_void_p), POINTER(c_size_t)]
+            self.__get_icc_profile.restype = c_int
+        except AttributeError:
+            self.__get_icc_profile = None
+
+        # tj3SetICCProfile - attach ICC profile to compressor before compression (TurboJPEG 3.1+)
+        try:
+            self.__set_icc_profile = turbo_jpeg.tj3SetICCProfile
+            self.__set_icc_profile.argtypes = [c_void_p, c_void_p, c_size_t]
+            self.__set_icc_profile.restype = c_int
+        except AttributeError:
+            self.__set_icc_profile = None
+
         # tjGetScalingFactors - still the current API in 3.1.x
         get_scaling_factors = turbo_jpeg.tjGetScalingFactors
         get_scaling_factors.argtypes = [POINTER(c_int)]
@@ -591,6 +608,101 @@ class TurboJPEG(object):
                 return (width, height, jpeg_subsample, jpeg_colorspace)
         finally:
             self.__destroy(handle)
+
+    def get_icc_profile(self, jpeg_buf):
+        """Extracts the embedded ICC color profile from a JPEG image.
+
+        Requires TurboJPEG 3.1 or later with tj3GetICCProfile support.
+
+        Parameters
+        ----------
+        jpeg_buf : bytes
+            JPEG image data buffer containing an embedded ICC profile.
+
+        Returns
+        -------
+        bytes or None
+            Raw ICC profile data as a bytes object, or None if no ICC profile
+            is present in the JPEG stream.
+
+        Raises
+        ------
+        OSError
+            If the JPEG header cannot be parsed or a fatal error occurs.
+        NotImplementedError
+            If the loaded libturbojpeg does not export tj3GetICCProfile.
+
+        Examples
+        --------
+        >>> jpeg = TurboJPEG()
+        >>> with open('photo_with_icc.jpg', 'rb') as f:
+        ...     data = f.read()
+        >>> icc = jpeg.get_icc_profile(data)
+        >>> if icc:
+        ...     print(f'ICC profile size: {len(icc)} bytes')
+        """
+        if self.__get_icc_profile is None:
+            raise NotImplementedError(
+                'tj3GetICCProfile is not available in the loaded libturbojpeg. '
+                'Please upgrade to libjpeg-turbo 3.1 or later.')
+        handle = self.__init(TJINIT_DECOMPRESS)
+        try:
+            # Set TJPARAM_SAVEMARKERS to 2 (APP2) so the decompressor
+            # retains ICC profile markers during header parsing.
+            if self.__set(handle, TJPARAM_SAVEMARKERS, 2) != 0:
+                self.__report_error(handle)
+            jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
+            src_addr = self.__getaddr(jpeg_array)
+            status = self.__decompress_header(handle, src_addr, jpeg_array.size)
+            if status != 0:
+                self.__report_error(handle)
+            icc_buf = c_void_p()
+            icc_size = c_size_t()
+            status = self.__get_icc_profile(handle, byref(icc_buf), byref(icc_size))
+            if status != 0:
+                # A non-fatal return (e.g. no profile present) should return None
+                err_code = self.__get_error_code(handle)
+                if err_code == TJERR_WARNING:
+                    return None
+                self.__report_error(handle)
+            if icc_buf.value is None or icc_size.value == 0:
+                return None
+            result = self.__copy_from_buffer(icc_buf.value, icc_size.value)
+            self.__free(icc_buf)
+            return result
+        finally:
+            self.__destroy(handle)
+
+    def set_icc_profile(self, handle, icc_buf):
+        """Attaches an ICC color profile to an active compressor handle.
+
+        This is a low-level helper intended for use when building custom
+        compression pipelines. In most cases, use encode() with the
+        icc_profile parameter instead.
+
+        Parameters
+        ----------
+        handle : ctypes void pointer
+            An active TurboJPEG compressor handle (TJINIT_COMPRESS).
+        icc_buf : bytes
+            Raw ICC profile data to embed.
+
+        Raises
+        ------
+        OSError
+            If tj3SetICCProfile returns a non-zero status.
+        NotImplementedError
+            If the loaded libturbojpeg does not export tj3SetICCProfile.
+        """
+        if self.__set_icc_profile is None:
+            raise NotImplementedError(
+                'tj3SetICCProfile is not available in the loaded libturbojpeg. '
+                'Please upgrade to libjpeg-turbo 3.1 or later.')
+        icc_array = np.frombuffer(icc_buf, dtype=np.uint8)
+        icc_addr = self.__getaddr(icc_array)
+        status = self.__set_icc_profile(handle, icc_addr, len(icc_buf))
+        if status != 0:
+            self.__report_error(handle)
 
     def decode(self, jpeg_buf, pixel_format=TJPF_BGR, scaling_factor=None, flags=0, dst=None):
         """decodes JPEG memory buffer to numpy array.
@@ -707,7 +819,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None, lossless=False):
+    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None, lossless=False, icc_profile=None):
         """encodes numpy array to JPEG memory buffer.
         
         Parameters
@@ -729,6 +841,9 @@ class TurboJPEG(object):
             When True, provides perfect reconstruction with larger file sizes.
             Note: quality and jpeg_subsample parameters are ignored in lossless mode;
             subsampling is automatically set to 4:4:4 by the library.
+        icc_profile : bytes or None
+            Raw ICC profile data to embed in the JPEG (optional).
+            Requires TurboJPEG 3.0 or later with tj3SetICCProfile support.
             
         Returns
         -------
@@ -762,6 +877,9 @@ class TurboJPEG(object):
             # Validate dtype is uint8
             if img_array.dtype != np.uint8:
                 raise ValueError('encode() requires uint8 array (values 0-255); use encode_12bit() for 12-bit images (uint16, 0-4095) or encode_16bit() for 16-bit images (uint16, 0-65535)')
+            
+            if icc_profile is not None:
+                self.set_icc_profile(handle, icc_profile)
             
             if dst is not None and not self.__is_buffer(dst):
                 raise TypeError('\'dst\' argument must support buffer protocol')
