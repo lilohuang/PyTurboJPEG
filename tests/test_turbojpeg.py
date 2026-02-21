@@ -1820,7 +1820,17 @@ MINIMAL_SRGB_ICC = _make_minimal_srgb_icc()
 
 
 class TestICCProfile:
-    """Test ICC profile embed/extract functionality."""
+    """Test ICC profile embed/extract functionality (requires TurboJPEG 3.1+)."""
+
+    @pytest.fixture(autouse=True)
+    def require_icc_support(self, jpeg_instance):
+        """Skip the test if the loaded libturbojpeg does not support ICC profiles."""
+        try:
+            jpeg_instance.get_icc_profile(b'\xff\xd8\xff\xd9')
+        except NotImplementedError as e:
+            pytest.skip(str(e))
+        except (OSError, Exception):
+            pass  # Header parse error is fine — the function exists
 
     def test_get_icc_profile_with_embedded_profile(self, jpeg_instance, sample_bgr_image):
         """Test that get_icc_profile returns non-empty bytes for a JPEG with ICC profile."""
