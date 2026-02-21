@@ -521,14 +521,14 @@ class TurboJPEG(object):
             self.__decompressToYUVPlanes16 = None
 
         # tj3GetICCProfile - retrieve ICC profile from decompressor after header parsing
-        self.__get_icc_profile_fn = turbo_jpeg.tj3GetICCProfile
-        self.__get_icc_profile_fn.argtypes = [c_void_p, POINTER(c_void_p), POINTER(c_size_t)]
-        self.__get_icc_profile_fn.restype = c_int
+        self.__get_icc_profile = turbo_jpeg.tj3GetICCProfile
+        self.__get_icc_profile.argtypes = [c_void_p, POINTER(c_void_p), POINTER(c_size_t)]
+        self.__get_icc_profile.restype = c_int
 
         # tj3SetICCProfile - attach ICC profile to compressor before compression
-        self.__set_icc_profile_fn = turbo_jpeg.tj3SetICCProfile
-        self.__set_icc_profile_fn.argtypes = [c_void_p, c_void_p, c_size_t]
-        self.__set_icc_profile_fn.restype = c_int
+        self.__set_icc_profile = turbo_jpeg.tj3SetICCProfile
+        self.__set_icc_profile.argtypes = [c_void_p, c_void_p, c_size_t]
+        self.__set_icc_profile.restype = c_int
 
         # tjGetScalingFactors - still the current API in 3.1.x
         get_scaling_factors = turbo_jpeg.tjGetScalingFactors
@@ -646,7 +646,7 @@ class TurboJPEG(object):
                 self.__report_error(handle)
             icc_buf = c_void_p()
             icc_size = c_size_t()
-            status = self.__get_icc_profile_fn(handle, byref(icc_buf), byref(icc_size))
+            status = self.__get_icc_profile(handle, byref(icc_buf), byref(icc_size))
             if status != 0:
                 # A non-fatal return (e.g. no profile present) should return None
                 err_code = self.__get_error_code(handle)
@@ -682,7 +682,7 @@ class TurboJPEG(object):
         """
         icc_array = np.frombuffer(icc_buf, dtype=np.uint8)
         icc_addr = self.__getaddr(icc_array)
-        status = self.__set_icc_profile_fn(handle, icc_addr, len(icc_buf))
+        status = self.__set_icc_profile(handle, icc_addr, len(icc_buf))
         if status != 0:
             self.__report_error(handle)
 
