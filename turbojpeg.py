@@ -841,7 +841,7 @@ class TurboJPEG(object):
             subsampling is automatically set to 4:4:4 by the library.
         icc_profile : bytes or None
             Raw ICC profile data to embed in the JPEG (optional).
-            Requires TurboJPEG 3.0 or later with tj3SetICCProfile support.
+            Requires TurboJPEG 3.1 or later with tj3SetICCProfile support.
             
         Returns
         -------
