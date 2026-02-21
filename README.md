@@ -220,6 +220,73 @@ cv2.imshow('transposed_image', transposed_image)
 cv2.waitKey(0)
 ```
 
+### ICC Color Management Workflow
+
+```python
+import io
+import numpy as np
+from PIL import Image, ImageCms
+from turbojpeg import TurboJPEG, TJPF_BGR
+
+def decode_jpeg_with_color_management(jpeg_path):
+    """
+    Decodes a JPEG and applies color management (ICC Profile to sRGB).
+    
+    Args:
+        jpeg_path (str): Path to the input JPEG file.
+        
+    Returns:
+        PIL.Image: The color-corrected sRGB Image object.
+    """
+    # 1. Initialize TurboJPEG
+    jpeg = TurboJPEG()
+    
+    with open(jpeg_path, 'rb') as f:
+        jpeg_data = f.read()
+    
+    # 2. Get image headers and decode pixels
+    # Using TJPF_BGR format (OpenCV standard) for the raw buffer
+    width, height, _, _ = jpeg.decode_header(jpeg_data)
+    pixels = jpeg.decode(jpeg_data, pixel_format=TJPF_BGR)
+    
+    # 3. Encapsulate into a Pillow Image object
+    # Key: Use 'raw' and 'BGR' decoder to correctly map BGR bytes to an RGB Image object
+    img = Image.frombytes('RGB', (width, height), pixels, 'raw', 'BGR')
+    
+    # 4. Handle ICC Profile transformation
+    try:
+        # Extract embedded ICC Profile
+        icc_profile = jpeg.get_icc_profile(jpeg_data)
+        
+        if icc_profile:
+            # Create Source and Destination Profile objects
+            src_profile = ImageCms.getOpenProfile(io.BytesIO(icc_profile))
+            dst_profile = ImageCms.createProfile("sRGB")
+            
+            # Perform color transformation (similar to "Convert to Profile" in Photoshop)
+            # This step recalculates pixel values to align with sRGB standards
+            img = ImageCms.profileToProfile(
+                img, 
+                src_profile, 
+                dst_profile, 
+                outputMode='RGB'
+            )
+            print(f"Successfully applied ICC profile from {jpeg_path}")
+        else:
+            print("No ICC profile found, assuming sRGB.")
+            
+    except Exception as e:
+        print(f"Color Management Error: {e}. Returning original raw image.")
+        
+    return img
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    result_img = decode_jpeg_with_color_management('icc_profile.jpg')
+    result_img.show()
+    # result_img.save('output_srgb.jpg', quality=95)
+```
+
 ## High-Precision JPEG Support
 
 PyTurboJPEG 2.0+ supports 12-bit and 16-bit precision JPEG encoding and decoding using libjpeg-turbo 3.0+ APIs. This feature is ideal for medical imaging, scientific photography, and other applications requiring higher bit depth.
