@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '2.1.0'
+__version__ = '2.2.0'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -329,13 +329,11 @@ def fill_background(coeffs_ptr, arrayRegion, planeRegion, componentID, transform
 
     return 1
 
-
 def split_byte_into_nibbles(value):
     """Split byte int into 2 nibbles (4 bits)."""
     first = value >> 4
     second = value & 0x0F
     return first, second
-
 
 class TurboJPEG(object):
     """A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image."""
@@ -490,6 +488,17 @@ class TurboJPEG(object):
         self.__decompress16.argtypes = [
             c_void_p, POINTER(c_ubyte), c_size_t, POINTER(c_ushort), c_int, c_int]
         self.__decompress16.restype = c_int
+
+        # tjGetScalingFactors
+        get_scaling_factors = turbo_jpeg.tjGetScalingFactors
+        get_scaling_factors.argtypes = [POINTER(c_int)]
+        get_scaling_factors.restype = POINTER(ScalingFactor)
+        num_scaling_factors = c_int()
+        scaling_factors = get_scaling_factors(byref(num_scaling_factors))
+        self.__scaling_factors = frozenset(
+            (scaling_factors[i].num, scaling_factors[i].denom)
+            for i in range(num_scaling_factors.value)
+        )
         
         # tj3CompressFromYUV16 - compress 16-bit YUV to JPEG (TurboJPEG 3.1+)
         # These functions may not be available in all TurboJPEG 3.x versions
@@ -535,17 +544,6 @@ class TurboJPEG(object):
             self.__set_icc_profile.restype = c_int
         except AttributeError:
             self.__set_icc_profile = None
-
-        # tjGetScalingFactors - still the current API in 3.1.x
-        get_scaling_factors = turbo_jpeg.tjGetScalingFactors
-        get_scaling_factors.argtypes = [POINTER(c_int)]
-        get_scaling_factors.restype = POINTER(ScalingFactor)
-        num_scaling_factors = c_int()
-        scaling_factors = get_scaling_factors(byref(num_scaling_factors))
-        self.__scaling_factors = frozenset(
-            (scaling_factors[i].num, scaling_factors[i].denom)
-            for i in range(num_scaling_factors.value)
-        )
 
     def decode_header(self, jpeg_buf, return_precision=False):
         """decodes JPEG header and returns image properties as a tuple.
