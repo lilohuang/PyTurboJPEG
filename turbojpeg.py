@@ -520,15 +520,21 @@ class TurboJPEG(object):
         except AttributeError:
             self.__decompressToYUVPlanes16 = None
 
-        # tj3GetICCProfile - retrieve ICC profile from decompressor after header parsing
-        self.__get_icc_profile = turbo_jpeg.tj3GetICCProfile
-        self.__get_icc_profile.argtypes = [c_void_p, POINTER(c_void_p), POINTER(c_size_t)]
-        self.__get_icc_profile.restype = c_int
+        # tj3GetICCProfile - retrieve ICC profile from decompressor after header parsing (TurboJPEG 3.1+)
+        try:
+            self.__get_icc_profile = turbo_jpeg.tj3GetICCProfile
+            self.__get_icc_profile.argtypes = [c_void_p, POINTER(c_void_p), POINTER(c_size_t)]
+            self.__get_icc_profile.restype = c_int
+        except AttributeError:
+            self.__get_icc_profile = None
 
-        # tj3SetICCProfile - attach ICC profile to compressor before compression
-        self.__set_icc_profile = turbo_jpeg.tj3SetICCProfile
-        self.__set_icc_profile.argtypes = [c_void_p, c_void_p, c_size_t]
-        self.__set_icc_profile.restype = c_int
+        # tj3SetICCProfile - attach ICC profile to compressor before compression (TurboJPEG 3.1+)
+        try:
+            self.__set_icc_profile = turbo_jpeg.tj3SetICCProfile
+            self.__set_icc_profile.argtypes = [c_void_p, c_void_p, c_size_t]
+            self.__set_icc_profile.restype = c_int
+        except AttributeError:
+            self.__set_icc_profile = None
 
         # tjGetScalingFactors - still the current API in 3.1.x
         get_scaling_factors = turbo_jpeg.tjGetScalingFactors
@@ -606,7 +612,7 @@ class TurboJPEG(object):
     def get_icc_profile(self, jpeg_buf):
         """Extracts the embedded ICC color profile from a JPEG image.
 
-        Requires TurboJPEG 3.0 or later with tj3GetICCProfile support.
+        Requires TurboJPEG 3.1 or later with tj3GetICCProfile support.
 
         Parameters
         ----------
@@ -623,6 +629,8 @@ class TurboJPEG(object):
         ------
         OSError
             If the JPEG header cannot be parsed or a fatal error occurs.
+        NotImplementedError
+            If the loaded libturbojpeg does not export tj3GetICCProfile.
 
         Examples
         --------
@@ -633,6 +641,10 @@ class TurboJPEG(object):
         >>> if icc:
         ...     print(f'ICC profile size: {len(icc)} bytes')
         """
+        if self.__get_icc_profile is None:
+            raise NotImplementedError(
+                'tj3GetICCProfile is not available in the loaded libturbojpeg. '
+                'Please upgrade to libjpeg-turbo 3.1 or later.')
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
             # Set TJPARAM_SAVEMARKERS to 2 (APP2) so the decompressor
@@ -679,7 +691,13 @@ class TurboJPEG(object):
         ------
         OSError
             If tj3SetICCProfile returns a non-zero status.
+        NotImplementedError
+            If the loaded libturbojpeg does not export tj3SetICCProfile.
         """
+        if self.__set_icc_profile is None:
+            raise NotImplementedError(
+                'tj3SetICCProfile is not available in the loaded libturbojpeg. '
+                'Please upgrade to libjpeg-turbo 3.1 or later.')
         icc_array = np.frombuffer(icc_buf, dtype=np.uint8)
         icc_addr = self.__getaddr(icc_array)
         status = self.__set_icc_profile(handle, icc_addr, len(icc_buf))
