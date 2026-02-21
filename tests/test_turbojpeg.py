@@ -30,7 +30,8 @@ from turbojpeg import (
     TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_GRAY, TJSAMP_440, TJSAMP_411,
     TJCS_RGB, TJCS_YCbCr, TJCS_GRAY,
     TJFLAG_PROGRESSIVE, TJFLAG_FASTUPSAMPLE, TJFLAG_FASTDCT,
-    TJPRECISION_8, TJPRECISION_12, TJPRECISION_16
+    TJPRECISION_8, TJPRECISION_12, TJPRECISION_16,
+    TJPARAM_SAVEMARKERS
 )
 
 
@@ -1800,6 +1801,56 @@ class TestLosslessJPEG:
         jpeg_gray = jpeg_instance.encode(img_gray, pixel_format=TJPF_GRAY, lossless=True)
         decoded_gray = jpeg_instance.decode(jpeg_gray, pixel_format=TJPF_GRAY)
         assert np.array_equal(img_gray, decoded_gray), "Lossless grayscale should be perfect"
+
+
+import struct
+
+def _make_minimal_srgb_icc():
+    """Build a minimal but structurally valid ICC profile for sRGB."""
+    profile = bytearray(132)
+    struct.pack_into('>I', profile, 0, 132)
+    struct.pack_into('>I', profile, 8, 0x02100000)
+    profile[12:16] = b'mntr'
+    profile[16:20] = b'RGB '
+    profile[20:24] = b'XYZ '
+    profile[36:40] = b'acsp'
+    return bytes(profile)
+
+MINIMAL_SRGB_ICC = _make_minimal_srgb_icc()
+
+
+class TestICCProfile:
+    """Test ICC profile embed/extract functionality."""
+
+    def test_get_icc_profile_with_embedded_profile(self, jpeg_instance, sample_bgr_image):
+        """Test that get_icc_profile returns non-empty bytes for a JPEG with ICC profile."""
+        jpeg_with_icc = jpeg_instance.encode(
+            sample_bgr_image, quality=85, icc_profile=MINIMAL_SRGB_ICC)
+        icc = jpeg_instance.get_icc_profile(jpeg_with_icc)
+        assert icc is not None, "Expected ICC profile but got None"
+        assert isinstance(icc, bytes), "ICC profile should be bytes"
+        assert len(icc) > 0, "ICC profile should be non-empty"
+        assert icc == MINIMAL_SRGB_ICC, "Extracted ICC profile should match embedded profile"
+
+    def test_get_icc_profile_without_profile(self, jpeg_instance, sample_bgr_image):
+        """Test that get_icc_profile returns None for a JPEG without ICC profile."""
+        jpeg_without_icc = jpeg_instance.encode(sample_bgr_image, quality=85)
+        icc = jpeg_instance.get_icc_profile(jpeg_without_icc)
+        assert icc is None, \
+            "Expected None for JPEG without ICC profile"
+
+    def test_icc_profile_roundtrip(self, jpeg_instance, sample_bgr_image):
+        """Test ICC profile survives a full encode→decode_header roundtrip."""
+        jpeg_data = jpeg_instance.encode(
+            sample_bgr_image, quality=95,
+            jpeg_subsample=TJSAMP_444,
+            icc_profile=MINIMAL_SRGB_ICC)
+        assert jpeg_data is not None
+        assert len(jpeg_data) > 0
+        extracted_icc = jpeg_instance.get_icc_profile(jpeg_data)
+        assert extracted_icc is not None, "ICC profile missing after roundtrip"
+        assert extracted_icc == MINIMAL_SRGB_ICC, \
+            f"ICC profile mismatch: expected {len(MINIMAL_SRGB_ICC)} bytes, got {len(extracted_icc) if extracted_icc else 0}"
 
 
 if __name__ == '__main__':
