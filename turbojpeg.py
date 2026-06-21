@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '2.2.0'
+__version__ = '2.3.0'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -305,12 +305,12 @@ def fill_background(coeffs_ptr, arrayRegion, planeRegion, componentID, transform
             min(arrayRegion.y+arrayRegion.h, background_data.h)
             - arrayRegion.y
         )
-        for x in range(background_data.w//MCU_WIDTH, planeRegion.w//MCU_WIDTH):
-            for y in range(
-                left_start_row//MCU_HEIGHT,
-                left_end_row//MCU_HEIGHT
-            ):
-                coeffs[y][x][0] = background_data.lum
+        y_start = left_start_row // MCU_HEIGHT
+        y_end = left_end_row // MCU_HEIGHT
+        x_start = background_data.w // MCU_WIDTH
+        x_end = planeRegion.w // MCU_WIDTH
+        if y_end > y_start and x_end > x_start:
+            coeffs[y_start:y_end, x_start:x_end, 0] = background_data.lum
 
         # fill mcus under image
         bottom_start_row = (
@@ -320,12 +320,11 @@ def fill_background(coeffs_ptr, arrayRegion, planeRegion, componentID, transform
             max(arrayRegion.y+arrayRegion.h, background_data.h)
             - arrayRegion.y
         )
-        for x in range(0, planeRegion.w//MCU_WIDTH):
-            for y in range(
-                bottom_start_row//MCU_HEIGHT,
-                bottom_end_row//MCU_HEIGHT
-            ):
-                coeffs[y][x][0] = background_data.lum
+        y_start = bottom_start_row // MCU_HEIGHT
+        y_end = bottom_end_row // MCU_HEIGHT
+        x_end = planeRegion.w // MCU_WIDTH
+        if y_end > y_start and x_end > 0:
+            coeffs[y_start:y_end, 0:x_end, 0] = background_data.lum
 
     return 1
 
@@ -1311,6 +1310,8 @@ class TurboJPEG(object):
 
             # Define crop transforms from cropping_regions
             crop_transforms = (TransformStruct * number_of_operations)()
+            # Pre-compute luminance coefficient once for all crops
+            lum_coefficient = None
             for i, crop_region in enumerate(crop_regions):
                 # The fill_background callback is slow, only use it if needed
                 if self.__need_fill_background(
@@ -1318,14 +1319,16 @@ class TurboJPEG(object):
                     (image_width, image_height),
                     background_luminance
                 ):
+                    if lum_coefficient is None:
+                        lum_coefficient = self.__map_luminance_to_dc_dct_coefficient(
+                            bytearray(jpeg_buf),
+                            background_luminance
+                        )
                     # Use callback to fill in background post-transform
                     callback_data = BackgroundStruct(
                         image_width,
                         image_height,
-                        self.__map_luminance_to_dc_dct_coefficient(
-                            bytearray(jpeg_buf),
-                            background_luminance
-                        )
+                        lum_coefficient
                     )
                     callback = CUSTOMFILTER(fill_background)
                     crop_transforms[i] = TransformStruct(
@@ -1350,7 +1353,6 @@ class TurboJPEG(object):
 
     def buffer_size(self, img_array, jpeg_subsample=TJSAMP_422):
         """Get maximum number of bytes of compressed jpeg data"""
-        img_array = np.ascontiguousarray(img_array)
         height, width = img_array.shape[:2]
         return self.__buffer_size(width, height, jpeg_subsample)
 
