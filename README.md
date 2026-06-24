@@ -155,6 +155,13 @@ with open('input.jpg', 'rb') as f:
     cropped_data = jpeg.crop(f.read(), 8, 8, 320, 240)
 with open('cropped_output.jpg', 'wb') as f:
     f.write(cropped_data)
+
+# Lossless Huffman table optimization (re-encodes with optimal tables,
+# identical pixels; typically smaller unless already optimized)
+with open('input.jpg', 'rb') as f:
+    optimized_data = jpeg.optimize(f.read())
+with open('optimized_output.jpg', 'wb') as f:
+    f.write(optimized_data)
 ```
 
 ### In-Place Operations

@@ -513,6 +513,17 @@ class TestCropMultiple:
         assert subsample == TJSAMP_GRAY
 
 
+class TestOptimize:
+    """Test optimize function."""
+
+    def test_optimize_is_lossless(self, jpeg_instance, encoded_sample_jpeg):
+        """Test optimization returns a valid JPEG with unchanged pixels."""
+        optimized = jpeg_instance.optimize(encoded_sample_jpeg)
+        original_pixels = jpeg_instance.decode(encoded_sample_jpeg)
+        optimized_pixels = jpeg_instance.decode(optimized)
+        assert np.array_equal(original_pixels, optimized_pixels)
+
+
 class TestBufferSize:
     """Test buffer_size function."""
     
