@@ -26,6 +26,7 @@ The test suite covers all core functions of PyTurboJPEG plus regression tests fo
 - **scale_with_quality()** - Tests scaling and quality adjustment
 - **crop()** - Tests lossless crop operations
 - **crop_multiple()** - Tests multiple crop operations with background handling
+- **optimize()** - Tests lossless Huffman table optimization
 - **buffer_size()** - Tests buffer size calculation
 - **scaling_factors** - Tests the scaling factors property
 
@@ -109,6 +110,7 @@ Each test class focuses on a specific function or feature:
 - `TestScaleWithQuality` - Tests scaling with quality adjustment
 - `TestCrop` - Tests lossless crop operations
 - `TestCropMultiple` - Tests multiple crop operations
+- `TestOptimize` - Tests lossless Huffman table optimization
 - `TestBufferSize` - Tests buffer size calculation
 - `TestErrorHandling` - Tests error conditions
 - `TestIntegration` - Tests complete workflows

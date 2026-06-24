@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '2.3.0'
+__version__ = '2.4.0'
 
 from ctypes import *
 from ctypes.util import find_library
@@ -125,6 +125,7 @@ TJXOPT_GRAY = 8
 TJXOPT_NOOUTPUT = 16
 TJXOPT_PROGRESSIVE = 32
 TJXOPT_COPYNONE = 64
+TJXOPT_OPTIMIZE = 256  # Huffman table optimization
 
 # pixel size
 # see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
@@ -1347,6 +1348,43 @@ class TurboJPEG(object):
             results = self.__do_transform(handle, src_addr, jpeg_array.size, number_of_operations, crop_transforms)
 
             return results
+
+        finally:
+            self.__destroy(handle)
+
+    def optimize(self, jpeg_buf, copynone=False):
+        """Losslessly optimize the Huffman tables of a jpeg image.
+
+        Re-encodes the entropy-coded data with optimal Huffman tables
+        (equivalent to ``jpegtran -optimize``) without any loss in image
+        quality. Typically reduces file size, unless the input is already
+        optimized.
+
+        Parameters
+        ----------
+        jpeg_buf: bytes
+            Input jpeg image.
+        copynone: bool
+            True = do not copy EXIF data (False by default)
+
+        Returns
+        ----------
+        bytes
+            Huffman-optimized jpeg image.
+        """
+        handle = self.__init(TJINIT_TRANSFORM)
+        try:
+            jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
+            src_addr = self.__getaddr(jpeg_array)
+            status = self.__decompress_header(handle, src_addr, jpeg_array.size)
+            if status != 0:
+                self.__report_error(handle)
+            # Without TJXOPT_CROP the cropping region is ignored and the whole
+            # image is transformed, so the (zeroed) region needs no setup.
+            transforms = (TransformStruct * 1)()
+            transforms[0].op = TJXOP_NONE
+            transforms[0].options = TJXOPT_OPTIMIZE | (copynone and TJXOPT_COPYNONE)
+            return self.__do_transform(handle, src_addr, jpeg_array.size, 1, transforms)[0]
 
         finally:
             self.__destroy(handle)
