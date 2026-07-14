@@ -40,11 +40,12 @@ The test suite covers all core functions of PyTurboJPEG plus regression tests fo
 6. **Error Handling Tests** - Test error conditions and edge cases
 7. **Integration Tests** - Test complete workflows and roundtrip operations
 8. **Regression Tests** - Tests for historical bugs and edge cases:
-   - **Buffer Handling Robustness** (12 tests) - Empty buffers, truncated headers, corrupted data
-   - **Library Loading** (3 tests) - Missing library error handling with clear messages
-   - **Colorspace Consistency** (31 tests) - All TJPF/TJSAMP combinations
-   - **Memory Management** (6 tests) - 1000+ encode/decode cycles with memory leak detection using pytest-memray
-   - **Crop Functionality** (10 tests) - Comprehensive crop testing with real input image
+   - **Buffer Handling Robustness** - Empty buffers, truncated headers, corrupted data
+   - **Library Loading** - Missing/old libraries and real TurboJPEG 3 construction
+   - **Colorspace Consistency** - All TJPF/TJSAMP combinations, including 4:4:1
+   - **Memory Management** - Repeated encode/decode cycles with pytest-memray limits
+   - **Crop Functionality** - MCU alignment, partial edges, DQT, and background fill
+   - **Security Regressions** - Buffer bounds, resource limits, flags, and input validation
 
 ## Running the Tests
 
@@ -55,8 +56,8 @@ sudo apt-get install libturbojpeg  # On Ubuntu/Debian
 # OR
 brew install jpeg-turbo  # On macOS
 
-# Install Python dependencies
-pip install numpy pytest pytest-memray
+# Install the project and its complete test toolchain
+python -m pip install -e ".[test]"
 ```
 
 ### Run All Tests
@@ -121,10 +122,18 @@ Each test class focuses on a specific function or feature:
 - `TestColorspaceConsistency` - All pixel format/subsampling combinations
 - `TestMemoryManagement` - Stress testing with 1000+ cycles and memory leak detection
 - `TestCropFunctionality` - Crop function with real input image
+- `TestYUVMetadataAndPadding` - Odd dimensions, explicit layout metadata, and zeroed padding
+- `TestFlagSemantics` - Native flag mapping, output semantics, and rejected combinations
+- `TestPublicInputValidation` - Shape, enum, range, and empty-image validation
+- `TestCropAndTransformRegressions` - 4:4:1, partial iMCUs, DQT, and callbacks
+- `TestScaleWithQualityResources` - Temporary-buffer dtype and handle lifetime
 
 ## Memory Leak Detection
 
-The `TestMemoryManagement` class uses **pytest-memray** to detect memory leaks during repeated function execution. Each test is decorated with `@pytest.mark.limit_memory()` to set memory growth limits:
+The `TestMemoryManagement` class uses **pytest-memray** to detect memory leaks
+during repeated function execution. Installing the `test` extra installs the
+plugin on supported platforms. Each test is decorated with
+`@pytest.mark.limit_memory()` to set memory growth limits:
 
 - Tests will fail if memory usage exceeds the specified limit
 - Helps catch slow memory leaks that accumulate over many iterations
@@ -157,16 +166,45 @@ The test suite uses synthetic test images generated via fixtures:
 
 ## Test Statistics
 
-- **Total Tests**: 114
-- **Passing**: 114 (100%)
-- **Skipped**: 0
-- **Core Function Tests**: 53
-- **Regression Tests**: 61
-  - Buffer Handling: 12 (updated for TJ 3.0+ error messages)
-  - Library Loading: 3
-  - Colorspace Consistency: 31
-  - Memory Management: 6 (with pytest-memray leak detection)
-  - Crop Functionality: 10 (all passing)
+The suite changes whenever regression coverage is added, so this document does
+not store a fixed test count. Use pytest as the source of truth:
+
+```bash
+pytest --collect-only -q
+pytest -q
+```
+
+## Performance Regression Benchmark
+
+The performance suite is opt-in and is not part of the default pytest or CI
+run. It compares the current working tree with the newest release tag whose
+version is lower than the current `turbojpeg.__version__`. Both implementations
+are loaded into the same Python process, pinned to one CPU when supported, and
+their default encode, decode, header, and YUV paths are measured in alternating
+order:
+
+```bash
+PYTURBOJPEG_RUN_BENCHMARKS=1 \
+pytest benchmarks/test_performance.py -v -s
+```
+
+The test covers 8x8, 32x32, and 1280x720 images. It fails when the current
+implementation exceeds both the default 5% relative tolerance and the 0.25
+microsecond absolute noise allowance. These settings can be overridden when
+investigating a regression:
+
+```bash
+PYTURBOJPEG_RUN_BENCHMARKS=1 \
+PYTURBOJPEG_BENCHMARK_BASELINE=v2.4.0 \
+PYTURBOJPEG_BENCHMARK_ROUNDS=15 \
+PYTURBOJPEG_BENCHMARK_MAX_PERCENT=3 \
+PYTURBOJPEG_BENCHMARK_MAX_US=0.15 \
+pytest benchmarks/test_performance.py -v -s
+```
+
+Always compare revisions on the same machine with the same Python, NumPy, and
+libjpeg-turbo versions. Absolute timings are intentionally not committed
+because they are not portable across systems.
 
 ## Edge Cases and Error Handling
 

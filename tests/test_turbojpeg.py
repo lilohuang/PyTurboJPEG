@@ -18,20 +18,27 @@ messages and DCT implementation compared to TurboJPEG 2.x.
 import pytest
 import numpy as np
 import os
-import tempfile
-from io import BytesIO
-from unittest.mock import patch, MagicMock
+import struct
+from unittest.mock import patch
+from ctypes import POINTER, c_size_t, c_void_p, cast
 from ctypes.util import find_library
 
 from turbojpeg import (
-    TurboJPEG,
+    CroppingRegion, TurboJPEG, YUVPlaneInfo, fill_background,
+    tjMCUHeight, tjMCUWidth,
     TJPF_RGB, TJPF_BGR, TJPF_GRAY, TJPF_RGBA, TJPF_BGRA, TJPF_RGBX, TJPF_BGRX,
     TJPF_XBGR, TJPF_XRGB, TJPF_ABGR, TJPF_ARGB,
     TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_GRAY, TJSAMP_440, TJSAMP_411,
+    TJSAMP_441,
     TJCS_RGB, TJCS_YCbCr, TJCS_GRAY,
-    TJFLAG_PROGRESSIVE, TJFLAG_FASTUPSAMPLE, TJFLAG_FASTDCT,
-    TJPRECISION_8, TJPRECISION_12, TJPRECISION_16,
-    TJPARAM_SAVEMARKERS
+    TJFLAG_ACCURATEDCT, TJFLAG_BOTTOMUP, TJFLAG_PROGRESSIVE,
+    TJFLAG_FASTUPSAMPLE, TJFLAG_FASTDCT, TJFLAG_STOPONWARNING,
+    TJFLAG_LIMITSCANS,
+    TJINIT_COMPRESS, TJINIT_DECOMPRESS,
+    TJPARAM_BOTTOMUP, TJPARAM_FASTDCT,
+    TJPARAM_SCANLIMIT, TJPARAM_MAXMEMORY, TJPARAM_MAXPIXELS,
+    TJPARAM_STOPONWARNING,
+    DEFAULT_MAX_PIXELS, DEFAULT_MAX_MEMORY, DEFAULT_SCAN_LIMIT,
 )
 
 
@@ -171,6 +178,193 @@ class TestDecodeHeader:
             jpeg_instance.decode_header(b'')
 
 
+class TestDecodeResourceLimits:
+    """Regression tests for bounded decompression and transformation."""
+
+    @staticmethod
+    def _new_jpeg(**kwargs):
+        return TurboJPEG(
+            lib_path=os.environ.get('TURBOJPEG_LIB_PATH'),
+            **kwargs,
+        )
+
+    @staticmethod
+    def _replace_dimensions(jpeg_buf, width, height):
+        """Replace dimensions in the first start-of-frame marker."""
+        data = bytearray(jpeg_buf)
+        sof_markers = (
+            0xC0, 0xC1, 0xC2, 0xC3,
+            0xC5, 0xC6, 0xC7,
+            0xC9, 0xCA, 0xCB,
+            0xCD, 0xCE, 0xCF,
+        )
+        for marker_code in sof_markers:
+            marker_offset = data.find(bytes((0xFF, marker_code)))
+            if marker_offset >= 0:
+                data[marker_offset + 5:marker_offset + 7] = \
+                    height.to_bytes(2, 'big')
+                data[marker_offset + 7:marker_offset + 9] = \
+                    width.to_bytes(2, 'big')
+                return bytes(data)
+        raise AssertionError('JPEG start-of-frame marker was not found')
+
+    def test_resource_parameter_constants_match_turbojpeg_3(self):
+        """MAXMEMORY precedes MAXPIXELS in the TurboJPEG 3 enum."""
+        assert TJPARAM_MAXMEMORY == 23
+        assert TJPARAM_MAXPIXELS == 24
+
+    def test_default_resource_limits_skip_native_setters(
+            self, encoded_sample_jpeg):
+        """Disabled limits do not add native calls to the hot path."""
+        jpeg = self._new_jpeg()
+        native_set = jpeg._TurboJPEG__set
+        calls = []
+
+        def recording_set(handle, parameter, value):
+            calls.append((parameter, value))
+            return native_set(handle, parameter, value)
+
+        jpeg._TurboJPEG__set = recording_set
+        jpeg.decode_header(encoded_sample_jpeg)
+
+        assert DEFAULT_MAX_PIXELS == 0
+        assert DEFAULT_MAX_MEMORY == 0
+        assert DEFAULT_SCAN_LIMIT == 0
+        assert calls == []
+
+    def test_default_limits_allow_libturbojpeg_maximum_dimensions(
+            self, jpeg_instance):
+        """The wrapper accepts a 65500x65500 header without allocating it."""
+        source = jpeg_instance.encode(
+            np.zeros((8, 8, 3), dtype=np.uint8),
+            jpeg_subsample=TJSAMP_444,
+        )
+        maximum_header = self._replace_dimensions(
+            source, width=65_500, height=65_500)
+        jpeg = self._new_jpeg()
+
+        assert jpeg.decode_header(maximum_header)[:2] == (65_500, 65_500)
+
+    def test_configured_resource_limits_are_forwarded(
+            self, encoded_sample_jpeg):
+        """Constructor values are forwarded to the correct native parameters."""
+        jpeg = self._new_jpeg(
+            max_pixels=20_000,
+            max_memory=64,
+            scan_limit=7,
+        )
+        native_set = jpeg._TurboJPEG__set
+        calls = []
+
+        def recording_set(handle, parameter, value):
+            calls.append((parameter, value))
+            return native_set(handle, parameter, value)
+
+        jpeg._TurboJPEG__set = recording_set
+        jpeg.decode_header(encoded_sample_jpeg)
+
+        if jpeg._TurboJPEG__supports_native_resource_limits:
+            assert (TJPARAM_MAXPIXELS, 20_000) in calls
+            assert (TJPARAM_MAXMEMORY, 64) in calls
+        assert (TJPARAM_SCANLIMIT, 7) in calls
+
+    @pytest.mark.parametrize(('kwargs', 'exception_type'), [
+        ({'max_pixels': -1}, ValueError),
+        ({'max_memory': -1}, ValueError),
+        ({'scan_limit': -1}, ValueError),
+        ({'max_pixels': 1.5}, TypeError),
+        ({'max_memory': True}, TypeError),
+        ({'scan_limit': '500'}, TypeError),
+        ({'max_pixels': 2 ** 31}, ValueError),
+    ])
+    def test_constructor_rejects_invalid_resource_limits(
+            self, kwargs, exception_type):
+        """Resource limits must fit the signed integer native API."""
+        with pytest.raises(exception_type):
+            self._new_jpeg(**kwargs)
+
+    def test_oversized_header_is_rejected_before_numpy_allocation(
+            self, jpeg_instance):
+        """A malicious header cannot request a giant output allocation."""
+        source = jpeg_instance.encode(
+            np.zeros((8, 8, 3), dtype=np.uint8),
+            jpeg_subsample=TJSAMP_444,
+        )
+        oversized = self._replace_dimensions(
+            source, width=50_000, height=50_000)
+        limited = self._new_jpeg(max_pixels=1_000_000)
+
+        with patch(
+                'turbojpeg.np.empty',
+                side_effect=AssertionError('output allocation was attempted')):
+            with pytest.raises(ValueError, match='max_pixels'):
+                limited.decode(oversized)
+
+    @pytest.mark.parametrize('operation', [
+        'decode_header',
+        'decode',
+        'decode_to_yuv',
+        'decode_to_yuv_planes',
+        'scale_with_quality',
+        'decode_12bit',
+        'decode_16bit',
+        'crop',
+        'crop_multiple',
+        'optimize',
+    ])
+    def test_max_pixels_applies_to_decode_and_transform_paths(
+            self, jpeg_instance, operation):
+        """Every source-image path enforces the configured pixel bound."""
+        source = jpeg_instance.encode(
+            np.zeros((16, 16, 3), dtype=np.uint8))
+        limited = self._new_jpeg(max_pixels=255)
+
+        with pytest.raises(ValueError, match='max_pixels'):
+            if operation == 'crop':
+                limited.crop(source, 0, 0, 16, 16)
+            elif operation == 'crop_multiple':
+                limited.crop_multiple(source, [(0, 0, 16, 16)])
+            else:
+                getattr(limited, operation)(source)
+
+    def test_scan_limit_rejects_progressive_scan_bomb(
+            self, jpeg_instance):
+        """Progressive decoding stops when the configured scan limit is hit."""
+        image = np.random.randint(0, 256, (32, 32, 3), dtype=np.uint8)
+        sequential = jpeg_instance.encode(image)
+        progressive = jpeg_instance.encode(
+            image, flags=TJFLAG_PROGRESSIVE)
+        limited = self._new_jpeg(
+            max_pixels=0,
+            max_memory=0,
+            scan_limit=1,
+        )
+
+        assert limited.decode(sequential).shape == image.shape
+        with pytest.raises(OSError, match='more than 1 scans'):
+            limited.decode(progressive)
+
+    def test_limitscans_flag_maps_to_legacy_500_scan_limit(
+            self, encoded_sample_jpeg):
+        """The legacy flag enables its historical 500-scan bound."""
+        jpeg = self._new_jpeg(
+            max_pixels=0,
+            max_memory=0,
+            scan_limit=0,
+        )
+        native_set = jpeg._TurboJPEG__set
+        calls = []
+
+        def recording_set(handle, parameter, value):
+            calls.append((parameter, value))
+            return native_set(handle, parameter, value)
+
+        jpeg._TurboJPEG__set = recording_set
+        jpeg.decode(encoded_sample_jpeg, flags=TJFLAG_LIMITSCANS)
+
+        assert (TJPARAM_SCANLIMIT, 500) in calls
+
+
 class TestDecode:
     """Test decode function."""
     
@@ -238,6 +432,64 @@ class TestDecode:
         result = jpeg_instance.decode(encoded_sample_jpeg, dst=dst_array)
         assert result is dst_array
         assert id(result) == id(dst_array)
+
+    def test_decode_in_place_accepts_ndarray_subclass(
+            self, jpeg_instance, encoded_sample_jpeg):
+        """Writable contiguous ndarray subclasses are valid destinations."""
+        class DestinationArray(np.ndarray):
+            pass
+
+        dst_array = np.empty(
+            (100, 100, 3), dtype=np.uint8).view(DestinationArray)
+        result = jpeg_instance.decode(encoded_sample_jpeg, dst=dst_array)
+        assert result is dst_array
+
+    def test_decode_rejects_non_array_destination(
+            self, jpeg_instance, encoded_sample_jpeg):
+        """Decode destinations must be numpy arrays."""
+        dst = bytearray(100 * 100 * 3)
+        with pytest.raises(TypeError, match='numpy array'):
+            jpeg_instance.decode(encoded_sample_jpeg, dst=dst)
+
+    def test_decode_rejects_wrong_destination_shape(
+            self, jpeg_instance, encoded_sample_jpeg):
+        """Decode must not silently replace a destination of the wrong shape."""
+        dst = np.empty((50, 50, 3), dtype=np.uint8)
+        with pytest.raises(ValueError, match='must have shape'):
+            jpeg_instance.decode(encoded_sample_jpeg, dst=dst)
+
+    def test_decode_rejects_wrong_destination_dtype(
+            self, jpeg_instance, encoded_sample_jpeg):
+        """Decode destinations must use uint8 storage."""
+        dst = np.empty((100, 100, 3), dtype=np.float32)
+        with pytest.raises(ValueError, match='dtype uint8'):
+            jpeg_instance.decode(encoded_sample_jpeg, dst=dst)
+
+    def test_decode_rejects_noncontiguous_destination_without_writing(
+            self, jpeg_instance, encoded_sample_jpeg):
+        """A strided destination must be rejected before the native call."""
+        backing = np.full((100, 100, 6), 0xA5, dtype=np.uint8)
+        dst = backing[:, :, ::2]
+        before = backing.copy()
+        assert dst.shape == (100, 100, 3)
+        assert not dst.flags.c_contiguous
+
+        with pytest.raises(ValueError, match='C-contiguous'):
+            jpeg_instance.decode(encoded_sample_jpeg, dst=dst)
+
+        assert np.array_equal(backing, before)
+
+    def test_decode_rejects_readonly_destination_without_writing(
+            self, jpeg_instance, encoded_sample_jpeg):
+        """A read-only destination must be rejected before the native call."""
+        dst = np.full((100, 100, 3), 0xA5, dtype=np.uint8)
+        before = dst.copy()
+        dst.flags.writeable = False
+
+        with pytest.raises(ValueError, match='writable'):
+            jpeg_instance.decode(encoded_sample_jpeg, dst=dst)
+
+        assert np.array_equal(dst, before)
     
     def test_decode_invalid_data(self, jpeg_instance):
         """Test decode with invalid JPEG data raises error."""
@@ -364,6 +616,139 @@ class TestEncode:
         assert id(result) == id(dst_buf)
         assert n_bytes > 0
         assert n_bytes <= buffer_size
+
+    def test_encode_rejects_immutable_destination_without_mutating_it(
+            self, jpeg_instance, sample_bgr_image):
+        """Immutable bytes must never be passed to TurboJPEG as output."""
+        dst = bytes(jpeg_instance.buffer_size(sample_bgr_image))
+        before = dst
+        before_hash = hash(dst)
+
+        with pytest.raises(TypeError, match='writable'):
+            jpeg_instance.encode(sample_bgr_image, dst=dst)
+
+        assert dst == before
+        assert hash(dst) == before_hash
+
+    def test_encode_rejects_noncontiguous_destination_without_writing(
+            self, jpeg_instance, sample_bgr_image):
+        """Strided buffer views must be rejected before native compression."""
+        buffer_size = jpeg_instance.buffer_size(sample_bgr_image)
+        backing = bytearray([0xA5]) * (buffer_size * 2)
+        dst = memoryview(backing)[::2]
+        before = bytes(backing)
+        assert dst.nbytes == buffer_size
+        assert not dst.c_contiguous
+
+        with pytest.raises(ValueError, match='C-contiguous'):
+            jpeg_instance.encode(sample_bgr_image, dst=dst)
+
+        assert bytes(backing) == before
+
+    def test_encode_rejects_destination_smaller_than_worst_case(
+            self, jpeg_instance, sample_bgr_image):
+        """A short destination must raise instead of triggering reallocation."""
+        buffer_size = jpeg_instance.buffer_size(sample_bgr_image)
+        dst = bytearray([0xA5]) * (buffer_size - 1)
+        before = bytes(dst)
+
+        with pytest.raises(ValueError, match='buffer is too small'):
+            jpeg_instance.encode(sample_bgr_image, dst=dst)
+
+        assert bytes(dst) == before
+
+    def test_encode_uses_destination_nbytes_not_element_count(
+            self, jpeg_instance, sample_bgr_image):
+        """Typed writable buffers are sized in bytes, not Python elements."""
+        buffer_size = jpeg_instance.buffer_size(sample_bgr_image)
+        dst = np.zeros((buffer_size + 3) // 4, dtype=np.uint32)
+        assert len(dst) < buffer_size
+        assert memoryview(dst).nbytes >= buffer_size
+
+        result, n_bytes = jpeg_instance.encode(sample_bgr_image, dst=dst)
+
+        assert result is dst
+        jpeg_data = memoryview(dst).cast('B')[:n_bytes].tobytes()
+        assert jpeg_data[:2] == b'\xff\xd8'
+        assert jpeg_instance.decode(jpeg_data).shape == sample_bgr_image.shape
+
+    def test_lossless_encode_uses_444_size_for_destination(
+            self, jpeg_instance, sample_bgr_image):
+        """Lossless in-place encoding must reserve the 4:4:4 worst case."""
+        buffer_size = jpeg_instance.buffer_size(
+            sample_bgr_image, jpeg_subsample=TJSAMP_444)
+        dst = bytearray(buffer_size)
+
+        result, n_bytes = jpeg_instance.encode(
+            sample_bgr_image, dst=dst, lossless=True)
+
+        assert result is dst
+        decoded = jpeg_instance.decode(bytes(dst[:n_bytes]))
+        assert np.array_equal(decoded, sample_bgr_image)
+
+    def test_encode_frees_native_buffer_after_fatal_error(
+            self, jpeg_instance, sample_bgr_image, monkeypatch):
+        """A native output allocation is freed when compression fails."""
+        native_free = jpeg_instance._TurboJPEG__free
+        allocated = jpeg_instance._TurboJPEG__alloc(128)
+        free_calls = []
+
+        def fail_after_allocating(
+                handle, src, width, pitch, height, pixel_format,
+                jpeg_buf, jpeg_size):
+            cast(jpeg_buf, POINTER(c_void_p))[0] = c_void_p(allocated)
+            cast(jpeg_size, POINTER(c_size_t))[0] = c_size_t(128)
+            return -1
+
+        def raise_native_error(handle):
+            raise OSError('injected compression failure')
+
+        def recording_free(buffer):
+            free_calls.append(buffer.value)
+            native_free(buffer)
+
+        monkeypatch.setattr(
+            jpeg_instance, '_TurboJPEG__compress', fail_after_allocating)
+        monkeypatch.setattr(
+            jpeg_instance, '_TurboJPEG__report_error', raise_native_error)
+        monkeypatch.setattr(
+            jpeg_instance, '_TurboJPEG__free', recording_free)
+
+        try:
+            with pytest.raises(OSError, match='injected compression failure'):
+                jpeg_instance.encode(sample_bgr_image)
+        finally:
+            if not free_calls:
+                native_free(c_void_p(allocated))
+
+        assert free_calls == [allocated]
+
+    def test_encode_does_not_free_destination_after_fatal_error(
+            self, jpeg_instance, sample_bgr_image, monkeypatch):
+        """A caller-provided destination remains caller-owned on failure."""
+        dst = bytearray(jpeg_instance.buffer_size(sample_bgr_image))
+        free_calls = []
+
+        def fail_without_reallocating(
+                handle, src, width, pitch, height, pixel_format,
+                jpeg_buf, jpeg_size):
+            return -1
+
+        def raise_native_error(handle):
+            raise OSError('injected compression failure')
+
+        monkeypatch.setattr(
+            jpeg_instance, '_TurboJPEG__compress', fail_without_reallocating)
+        monkeypatch.setattr(
+            jpeg_instance, '_TurboJPEG__report_error', raise_native_error)
+        monkeypatch.setattr(
+            jpeg_instance, '_TurboJPEG__free',
+            lambda buffer: free_calls.append(buffer.value))
+
+        with pytest.raises(OSError, match='injected compression failure'):
+            jpeg_instance.encode(sample_bgr_image, dst=dst)
+
+        assert free_calls == []
     
     def test_encode_decode_roundtrip(self, jpeg_instance, sample_bgr_image):
         """Test that encoding and decoding preserves image dimensions."""
@@ -402,6 +787,158 @@ class TestEncodeFromYUV:
         jpeg_low = jpeg_instance.encode_from_yuv(yuv_buffer, 100, 100, quality=50)
         jpeg_high = jpeg_instance.encode_from_yuv(yuv_buffer, 100, 100, quality=95)
         assert len(jpeg_high) > len(jpeg_low)
+
+    @pytest.mark.parametrize('align', [1, 2, 4, 8])
+    def test_encode_from_yuv_accepts_matching_alignment(
+            self, jpeg_instance, align):
+        """YUV buffers decoded with a custom alignment can be re-encoded."""
+        height, width = 19, 17
+        image = np.arange(
+            height * width * 3, dtype=np.uint8).reshape(height, width, 3)
+        source = jpeg_instance.encode(
+            image, jpeg_subsample=TJSAMP_420)
+        yuv_buffer, _ = jpeg_instance.decode_to_yuv(source, pad=align)
+
+        jpeg_buf = jpeg_instance.encode_from_yuv(
+            yuv_buffer,
+            height=height,
+            width=width,
+            jpeg_subsample=TJSAMP_420,
+            align=align,
+        )
+
+        assert jpeg_instance.decode_header(jpeg_buf)[:2] == (width, height)
+
+    @pytest.mark.parametrize('jpeg_subsample', [
+        TJSAMP_444,
+        TJSAMP_422,
+        TJSAMP_420,
+        TJSAMP_GRAY,
+        TJSAMP_440,
+        TJSAMP_411,
+        TJSAMP_441,
+    ])
+    def test_encode_from_yuv_validates_all_subsampling_layouts(
+            self, jpeg_instance, jpeg_subsample):
+        """Capacity calculation follows every TurboJPEG YUV layout."""
+        height, width = 19, 17
+        image = np.arange(
+            height * width * 3, dtype=np.uint8).reshape(height, width, 3)
+        source = jpeg_instance.encode(
+            image, jpeg_subsample=jpeg_subsample)
+        yuv_buffer, _ = jpeg_instance.decode_to_yuv(source, pad=4)
+
+        jpeg_buf = jpeg_instance.encode_from_yuv(
+            yuv_buffer,
+            height=height,
+            width=width,
+            jpeg_subsample=jpeg_subsample,
+            align=4,
+        )
+
+        decoded_header = jpeg_instance.decode_header(jpeg_buf)
+        assert decoded_header[:3] == (width, height, jpeg_subsample)
+
+    def test_encode_from_yuv_rejects_short_buffer(
+            self, jpeg_instance, encoded_sample_jpeg):
+        """A short logical view is rejected before native code can read it."""
+        yuv_buffer, _ = jpeg_instance.decode_to_yuv(
+            encoded_sample_jpeg, pad=8)
+        short_buffer = yuv_buffer[:-1]
+        before = short_buffer.copy()
+
+        with pytest.raises(ValueError, match='requires at least'):
+            jpeg_instance.encode_from_yuv(
+                short_buffer,
+                height=100,
+                width=100,
+                jpeg_subsample=TJSAMP_422,
+                align=8,
+            )
+
+        assert np.array_equal(short_buffer, before)
+
+    def test_encode_from_yuv_rejects_empty_buffer(self, jpeg_instance):
+        """An empty source cannot satisfy a non-empty YUV layout."""
+        with pytest.raises(ValueError, match='requires at least'):
+            jpeg_instance.encode_from_yuv(
+                np.empty(0, dtype=np.uint8),
+                height=16,
+                width=16,
+            )
+
+    def test_encode_from_yuv_rejects_wrong_dtype(self, jpeg_instance):
+        """Element count cannot disguise a non-byte YUV source."""
+        source = np.zeros(1024, dtype=np.uint16)
+
+        with pytest.raises(ValueError, match='uint8'):
+            jpeg_instance.encode_from_yuv(
+                source,
+                height=16,
+                width=16,
+            )
+
+    def test_encode_from_yuv_rejects_non_contiguous_source(
+            self, jpeg_instance):
+        """A strided source is not silently copied or read as packed YUV."""
+        backing = np.zeros(4096, dtype=np.uint8)
+        source = backing[::2]
+
+        with pytest.raises(ValueError, match='C-contiguous'):
+            jpeg_instance.encode_from_yuv(
+                source,
+                height=16,
+                width=16,
+            )
+
+    @pytest.mark.parametrize('align', [0, -1, 3, 6])
+    def test_encode_from_yuv_rejects_invalid_alignment(
+            self, jpeg_instance, align):
+        """TurboJPEG requires a positive power-of-two row alignment."""
+        source = np.zeros(4096, dtype=np.uint8)
+
+        with pytest.raises(ValueError, match='power of two'):
+            jpeg_instance.encode_from_yuv(
+                source,
+                height=16,
+                width=16,
+                align=align,
+            )
+
+    def test_encode_from_yuv_rejects_unrepresentable_alignment_early(
+            self, jpeg_instance):
+        """A pathological alignment is rejected before old native size code."""
+        source = np.zeros(4096, dtype=np.uint8)
+
+        with patch.object(
+                jpeg_instance,
+                '_TurboJPEG__buffer_size_YUV',
+                side_effect=AssertionError('native size calculation called')):
+            with pytest.raises(ValueError, match='buffer is too small'):
+                jpeg_instance.encode_from_yuv(
+                    source,
+                    height=16,
+                    width=16,
+                    align=1 << 30,
+                )
+
+    @pytest.mark.parametrize(('height', 'width'), [
+        (0, 16),
+        (16, 0),
+        (-1, 16),
+        (16, -1),
+    ])
+    def test_encode_from_yuv_rejects_invalid_dimensions(
+            self, jpeg_instance, height, width):
+        """Dimensions must describe a positive native YUV layout."""
+        source = np.zeros(4096, dtype=np.uint8)
+
+        with pytest.raises(ValueError, match='positive integer'):
+            jpeg_instance.encode_from_yuv(
+                source,
+                height=height,
+                width=width,
+            )
 
 
 class TestScaleWithQuality:
@@ -845,48 +1382,16 @@ class TestLibraryLoading:
             assert 'PyTurboJPEG 1.x' in error_msg or '1.x' in error_msg
 
     def test_version_detection_accepts_new_library(self):
-        """Test that PyTurboJPEG 2.0 accepts TurboJPEG 3.x library."""
-        from unittest.mock import Mock, patch, MagicMock
-        from ctypes import CDLL, c_int, c_void_p, c_size_t, c_ubyte, POINTER
-        
-        # Create a mock library that simulates TurboJPEG 3.x (has tj3Init)
-        mock_new_lib = Mock(spec=CDLL)
-        
-        # Add all required TurboJPEG 3.x functions
-        for func_name in ['tj3Init', 'tj3Destroy', 'tj3Set', 'tj3Get', 
-                          'tj3SetScalingFactor', 'tj3JPEGBufSize', 'tj3YUVBufSize',
-                          'tj3YUVPlaneWidth', 'tj3YUVPlaneHeight', 'tj3DecompressHeader',
-                          'tj3Decompress8', 'tj3DecompressToYUV8', 'tj3DecompressToYUVPlanes8',
-                          'tj3Compress8', 'tj3CompressFromYUV8', 'tj3Transform',
-                          'tj3Free', 'tj3Alloc', 'tj3GetErrorStr', 'tj3GetErrorCode',
-                          'tjGetScalingFactors']:
-            setattr(mock_new_lib, func_name, Mock())
-        
-        # Mock tjGetScalingFactors to return proper structure
-        mock_scaling_factors = MagicMock()
-        mock_scaling_factors.__getitem__ = Mock(side_effect=lambda i: Mock(num=1, denom=1))
-        mock_new_lib.tjGetScalingFactors.return_value = mock_scaling_factors
-        
-        # Mock c_int to return a value object for scaling factors count
-        mock_c_int_instance = Mock()
-        mock_c_int_instance.value = 1
-        
-        # Patch cdll.LoadLibrary to return our mock new library
-        with patch('turbojpeg.cdll.LoadLibrary', return_value=mock_new_lib):
-            with patch('turbojpeg.byref', return_value=Mock()):
-                with patch('turbojpeg.c_int', return_value=mock_c_int_instance):
-                    # This should NOT raise a RuntimeError about version
-                    try:
-                        tj = TurboJPEG(lib_path='/fake/path/libturbojpeg.so.0')
-                        assert tj is not None
-                    except RuntimeError as e:
-                        if 'PyTurboJPEG 2.0 requires libjpeg-turbo 3.0' in str(e):
-                            pytest.fail(f"Should not reject TurboJPEG 3.x library: {e}")
-                        # Other RuntimeErrors are acceptable (e.g., from mock setup)
-                    except Exception as e:
-                        # Other exceptions from mock setup are acceptable, as long as it's not the version error
-                        if 'PyTurboJPEG 2.0 requires libjpeg-turbo 3.0' in str(e):
-                            pytest.fail(f"Should not reject TurboJPEG 3.x library: {e}")
+        """A real TurboJPEG 3.x library must complete construction."""
+        lib_path = os.environ.get('TURBOJPEG_LIB_PATH')
+        if lib_path is None:
+            lib_path = find_library('turbojpeg')
+        if lib_path is None:
+            pytest.skip('Could not find a TurboJPEG 3.x library')
+
+        tj = TurboJPEG(lib_path=lib_path)
+
+        assert tj.scaling_factors
 
 
 class TestColorspaceConsistency:
@@ -919,6 +1424,7 @@ class TestColorspaceConsistency:
         TJSAMP_420,
         TJSAMP_440,
         TJSAMP_411,
+        TJSAMP_441,
     ]
     
     @pytest.mark.parametrize("pixel_format,expected_channels", PIXEL_FORMATS)
@@ -1243,22 +1749,15 @@ class TestCropFunctionality:
         assert subsample == TJSAMP_GRAY
     
     def test_crop_full_image(self, jpeg_instance, test_crop_image):
-        """Test cropping the full image (accounts for MCU alignment)."""
+        """Cropping the full image retains right/bottom partial iMCUs."""
         # Get original dimensions
         orig_width, orig_height, _, _ = jpeg_instance.decode_header(test_crop_image)
         
-        # Crop entire image (may be adjusted to MCU boundaries)
+        # Crop the entire image, including partial edge iMCUs.
         cropped = jpeg_instance.crop(test_crop_image, 0, 0, orig_width, orig_height)
-        
-        # Verify dimensions are close (within MCU block size)
+
         width, height, _, _ = jpeg_instance.decode_header(cropped)
-        # MCU blocks are typically 8x8, 16x8, 16x16, or 32x8
-        # Allow for MCU adjustment (up to 16 pixels difference)
-        assert abs(width - orig_width) <= 16
-        assert abs(height - orig_height) <= 16
-        # Should still be substantial portion of original
-        assert width >= orig_width - 16
-        assert height >= orig_height - 16
+        assert (width, height) == (orig_width, orig_height)
     
     def test_crop_multiple_regions(self, jpeg_instance, test_crop_image):
         """Test crop_multiple function with the test image."""
@@ -1289,19 +1788,23 @@ class TestCropFunctionality:
         """Test crop at image edges."""
         orig_width, orig_height, _, _ = jpeg_instance.decode_header(test_crop_image)
         
-        # Crop from right edge (MCU-aligned)
-        right_edge_x = orig_width - 48
-        cropped_right = jpeg_instance.crop(test_crop_image, right_edge_x, 0, 48, 48)
+        # Start on the final aligned iMCU and retain the partial right edge.
+        right_edge_x = orig_width - (orig_width % 16 or 16)
+        right_width = orig_width - right_edge_x
+        cropped_right = jpeg_instance.crop(
+            test_crop_image, right_edge_x, 0, right_width, 48)
         width, height, _, _ = jpeg_instance.decode_header(cropped_right)
-        assert width == 48
+        assert width == right_width
         assert height == 48
-        
-        # Crop from bottom edge (MCU-aligned)
-        bottom_edge_y = orig_height - 48
-        cropped_bottom = jpeg_instance.crop(test_crop_image, 0, bottom_edge_y, 48, 48)
+
+        # Start on the final aligned iMCU and retain the partial bottom edge.
+        bottom_edge_y = orig_height - (orig_height % 16 or 16)
+        bottom_height = orig_height - bottom_edge_y
+        cropped_bottom = jpeg_instance.crop(
+            test_crop_image, 0, bottom_edge_y, 48, bottom_height)
         width, height, _, _ = jpeg_instance.decode_header(cropped_bottom)
         assert width == 48
-        assert height == 48
+        assert height == bottom_height
     
     def test_crop_preserves_quality(self, jpeg_instance, test_crop_image):
         """Test that crop is lossless (same quality)."""
@@ -1336,8 +1839,8 @@ def check_16bit_support(jpeg_instance):
         jpeg_buf = jpeg_instance.encode_16bit(img)
         # Try decoding it back
         decoded = jpeg_instance.decode_16bit(jpeg_buf)
-        return True
-    except (IOError, OSError, NotImplementedError, ValueError) as e:
+        return np.array_equal(img, decoded)
+    except (IOError, OSError, NotImplementedError, ValueError):
         return False
 
 
@@ -1500,18 +2003,12 @@ class TestHighPrecision:
         assert decoded.shape == sample_12bit_image.shape
     
     def test_16bit_with_flags(self, jpeg_instance, sample_16bit_image, supports_16bit):
-        """Test 16-bit with compression flags (PROGRESSIVE, FASTDCT)."""
+        """Reject flags whose semantics do not exist for lossless JPEG."""
         if not supports_16bit:
             pytest.skip("16-bit precision not supported by this TurboJPEG build")
-        # Progressive
-        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image, flags=TJFLAG_PROGRESSIVE)
-        decoded = jpeg_instance.decode_16bit(jpeg_buf)
-        assert decoded.shape == sample_16bit_image.shape
-        
-        # Fast DCT
-        jpeg_buf = jpeg_instance.encode_16bit(sample_16bit_image, flags=TJFLAG_FASTDCT)
-        decoded = jpeg_instance.decode_16bit(jpeg_buf, flags=TJFLAG_FASTDCT)
-        assert decoded.shape == sample_16bit_image.shape
+        for flags in (TJFLAG_PROGRESSIVE, TJFLAG_FASTDCT):
+            with pytest.raises(ValueError, match='lossless JPEG'):
+                jpeg_instance.encode_16bit(sample_16bit_image, flags=flags)
     
     def test_12bit_invalid_precision_parameter(self, jpeg_instance, sample_12bit_image):
         """Test error handling for wrong dtype in 12-bit methods."""
@@ -1705,6 +2202,93 @@ class TestHighPrecision:
 class TestLosslessJPEG:
     """Tests for lossless JPEG compression across all precision levels."""
 
+    @pytest.mark.parametrize('method_name', [
+        'decode',
+        'decode_to_yuv',
+        'decode_to_yuv_planes',
+        'scale_with_quality',
+    ])
+    def test_8bit_lossless_rejects_non_identity_scaling(
+            self, jpeg_instance, method_name):
+        """All 8-bit decode paths must reject unsafe lossless scaling."""
+        img = np.random.randint(0, 256, (32, 32, 3), dtype=np.uint8)
+        jpeg_buf = jpeg_instance.encode(img, lossless=True)
+        method = getattr(jpeg_instance, method_name)
+
+        for scaling_factor in sorted(
+                jpeg_instance.scaling_factors - {(1, 1)}):
+            with pytest.raises(ValueError, match='lossless JPEG'):
+                method(jpeg_buf, scaling_factor=scaling_factor)
+
+    def test_8bit_lossless_accepts_identity_scaling(self, jpeg_instance):
+        """Identity scaling is safe and preserves the full lossless image."""
+        img = np.random.randint(0, 256, (32, 32, 3), dtype=np.uint8)
+        jpeg_buf = jpeg_instance.encode(img, lossless=True)
+
+        decoded = jpeg_instance.decode(jpeg_buf, scaling_factor=(1, 1))
+
+        assert decoded.shape == img.shape
+        assert np.array_equal(decoded, img)
+
+    def test_12bit_lossless_rejects_non_identity_scaling(
+            self, jpeg_instance):
+        """12-bit lossless decode must reject scaling before allocation."""
+        img = np.random.randint(0, 4096, (32, 32, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_12bit(img, lossless=True)
+
+        for scaling_factor in sorted(
+                jpeg_instance.scaling_factors - {(1, 1)}):
+            with pytest.raises(ValueError, match='lossless JPEG'):
+                jpeg_instance.decode_12bit(
+                    jpeg_buf, scaling_factor=scaling_factor)
+
+    def test_12bit_lossless_accepts_identity_scaling(self, jpeg_instance):
+        """12-bit identity scaling must preserve the full image."""
+        img = np.random.randint(0, 4096, (32, 32, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_12bit(img, lossless=True)
+
+        decoded = jpeg_instance.decode_12bit(
+            jpeg_buf, scaling_factor=(1, 1))
+
+        assert np.array_equal(decoded, img)
+
+    def test_12bit_lossy_scaling_remains_supported(self, jpeg_instance):
+        """The lossless guard must not disable valid 12-bit lossy scaling."""
+        img = np.random.randint(0, 4096, (32, 32, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_12bit(img, lossless=False)
+
+        decoded = jpeg_instance.decode_12bit(
+            jpeg_buf, scaling_factor=(1, 2))
+
+        assert decoded.shape == (16, 16, 3)
+
+    def test_16bit_lossless_rejects_non_identity_scaling(
+            self, jpeg_instance, supports_16bit):
+        """16-bit lossless decode must reject scaling before allocation."""
+        if not supports_16bit:
+            pytest.skip("16-bit precision not supported by this TurboJPEG build")
+        img = np.random.randint(0, 65536, (32, 32, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_16bit(img)
+
+        for scaling_factor in sorted(
+                jpeg_instance.scaling_factors - {(1, 1)}):
+            with pytest.raises(ValueError, match='lossless JPEG'):
+                jpeg_instance.decode_16bit(
+                    jpeg_buf, scaling_factor=scaling_factor)
+
+    def test_16bit_lossless_accepts_identity_scaling(
+            self, jpeg_instance, supports_16bit):
+        """16-bit identity scaling must preserve the full image."""
+        if not supports_16bit:
+            pytest.skip("16-bit precision not supported by this TurboJPEG build")
+        img = np.random.randint(0, 65536, (32, 32, 3), dtype=np.uint16)
+        jpeg_buf = jpeg_instance.encode_16bit(img)
+
+        decoded = jpeg_instance.decode_16bit(
+            jpeg_buf, scaling_factor=(1, 1))
+
+        assert np.array_equal(decoded, img)
+
     def test_8bit_lossless_roundtrip(self, jpeg_instance):
         """Test 8-bit lossless encoding provides perfect reconstruction."""
         img = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
@@ -1746,7 +2330,7 @@ class TestLosslessJPEG:
         
         # Lossy encoding
         lossy_buf = jpeg_instance.encode(img, quality=95, lossless=False)
-        lossy_decoded = jpeg_instance.decode(lossy_buf)
+        jpeg_instance.decode(lossy_buf)
         
         # Lossless encoding
         lossless_buf = jpeg_instance.encode(img, lossless=True)
@@ -1769,7 +2353,7 @@ class TestLosslessJPEG:
         
         # Lossy encoding
         lossy_buf = jpeg_instance.encode_12bit(img, quality=95, lossless=False)
-        lossy_decoded = jpeg_instance.decode_12bit(lossy_buf)
+        jpeg_instance.decode_12bit(lossy_buf)
         
         # Lossless encoding
         lossless_buf = jpeg_instance.encode_12bit(img, lossless=True)
@@ -1814,7 +2398,513 @@ class TestLosslessJPEG:
         assert np.array_equal(img_gray, decoded_gray), "Lossless grayscale should be perfect"
 
 
-import struct
+class TestYUVMetadataAndPadding:
+    """Regression coverage for PTJ-005."""
+
+    @pytest.mark.parametrize('subsample', [
+        TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_GRAY,
+        TJSAMP_440, TJSAMP_411, TJSAMP_441,
+    ])
+    def test_unified_plane_sizes_match_native_plane_arrays(
+            self, jpeg_instance, subsample):
+        image = np.arange(17 * 19 * 3, dtype=np.uint8).reshape(17, 19, 3)
+        encoded = jpeg_instance.encode(image, jpeg_subsample=subsample)
+
+        _, plane_sizes = jpeg_instance.decode_to_yuv(encoded, pad=8)
+        unified, metadata = jpeg_instance.decode_to_yuv(
+            encoded, pad=8, return_metadata=True)
+        planes = jpeg_instance.decode_to_yuv_planes(encoded)
+
+        assert plane_sizes == [plane.shape for plane in planes]
+        assert [
+            (plane.height, plane.width) for plane in metadata
+        ] == plane_sizes
+        assert metadata[-1].offset + \
+            metadata[-1].stride * metadata[-1].height == unified.size
+
+    def test_unified_yuv_padding_is_zero_initialized(
+            self, jpeg_instance, monkeypatch):
+        image = np.arange(17 * 17 * 3, dtype=np.uint8).reshape(17, 17, 3)
+        encoded = jpeg_instance.encode(
+            image, jpeg_subsample=TJSAMP_420)
+        original_empty = np.empty
+
+        def dirty_empty(shape, *args, **kwargs):
+            result = original_empty(shape, *args, **kwargs)
+            result.fill(0xA5)
+            return result
+
+        monkeypatch.setattr('turbojpeg.np.empty', dirty_empty)
+        unified, plane_sizes = jpeg_instance.decode_to_yuv(encoded, pad=8)
+
+        offset = 0
+        for height, width in plane_sizes:
+            stride = (width + 7) & ~7
+            plane = unified[offset:offset + height * stride].reshape(
+                height, stride)
+            assert np.all(plane[:, width:] == 0)
+            offset += height * stride
+        assert offset == unified.size
+
+    def test_unified_yuv_can_return_explicit_layout_metadata(
+            self, jpeg_instance):
+        image = np.arange(17 * 17 * 3, dtype=np.uint8).reshape(17, 17, 3)
+        encoded = jpeg_instance.encode(
+            image, jpeg_subsample=TJSAMP_420)
+
+        unified, metadata = jpeg_instance.decode_to_yuv(
+            encoded, pad=8, return_metadata=True)
+
+        assert metadata == [
+            YUVPlaneInfo(offset=0, stride=24, width=18, height=18),
+            YUVPlaneInfo(offset=432, stride=16, width=9, height=9),
+            YUVPlaneInfo(offset=576, stride=16, width=9, height=9),
+        ]
+        assert metadata[-1].offset + \
+            metadata[-1].stride * metadata[-1].height == unified.size
+
+    def test_separate_yuv_plane_padding_is_zero_initialized(
+            self, jpeg_instance, monkeypatch):
+        image = np.arange(17 * 17 * 3, dtype=np.uint8).reshape(17, 17, 3)
+        encoded = jpeg_instance.encode(
+            image, jpeg_subsample=TJSAMP_420)
+        tight_planes = jpeg_instance.decode_to_yuv_planes(encoded)
+        strides = tuple(plane.shape[1] + 7 for plane in tight_planes)
+        original_empty = np.empty
+
+        def dirty_empty(shape, *args, **kwargs):
+            result = original_empty(shape, *args, **kwargs)
+            result.fill(0xA5)
+            return result
+
+        monkeypatch.setattr('turbojpeg.np.empty', dirty_empty)
+        padded_planes = jpeg_instance.decode_to_yuv_planes(
+            encoded, strides=strides)
+
+        for tight, padded in zip(tight_planes, padded_planes):
+            assert padded.shape[1] == tight.shape[1] + 7
+            assert np.all(padded[:, tight.shape[1]:] == 0)
+
+    @pytest.mark.parametrize('pad', [0, -1, 3, 1.5])
+    def test_decode_to_yuv_rejects_invalid_padding(
+            self, jpeg_instance, encoded_sample_jpeg, pad):
+        with pytest.raises((TypeError, ValueError)):
+            jpeg_instance.decode_to_yuv(encoded_sample_jpeg, pad=pad)
+
+    def test_decode_to_yuv_planes_rejects_short_stride(
+            self, jpeg_instance, encoded_sample_jpeg):
+        with pytest.raises(ValueError, match='must be at least'):
+            jpeg_instance.decode_to_yuv_planes(
+                encoded_sample_jpeg, strides=(1, 1, 1))
+
+
+class TestFlagSemantics:
+    """Regression coverage for PTJ-006."""
+
+    def test_bottomup_encode_reverses_source_rows(self, jpeg_instance):
+        image = np.arange(19 * 23 * 3, dtype=np.uint8).reshape(19, 23, 3)
+
+        bottom_up = jpeg_instance.encode(
+            image, quality=95, jpeg_subsample=TJSAMP_444,
+            flags=TJFLAG_BOTTOMUP)
+        explicitly_reversed = jpeg_instance.encode(
+            image[::-1], quality=95, jpeg_subsample=TJSAMP_444)
+
+        assert bottom_up == explicitly_reversed
+
+    def test_bottomup_decode_reverses_destination_rows(
+            self, jpeg_instance, encoded_sample_jpeg):
+        normal = jpeg_instance.decode(encoded_sample_jpeg)
+        bottom_up = jpeg_instance.decode(
+            encoded_sample_jpeg, flags=TJFLAG_BOTTOMUP)
+
+        assert np.array_equal(bottom_up, normal[::-1])
+
+    def test_yuv_and_scale_progressive_flags_have_real_effect(
+            self, jpeg_instance, encoded_sample_jpeg):
+        width, height, subsample, _ = jpeg_instance.decode_header(
+            encoded_sample_jpeg)
+        yuv, _ = jpeg_instance.decode_to_yuv(encoded_sample_jpeg)
+
+        from_yuv = jpeg_instance.encode_from_yuv(
+            yuv, height, width, jpeg_subsample=subsample,
+            flags=TJFLAG_PROGRESSIVE)
+        scaled = jpeg_instance.scale_with_quality(
+            encoded_sample_jpeg, flags=TJFLAG_PROGRESSIVE)
+
+        assert b'\xff\xc2' in from_yuv
+        assert b'\xff\xc2' in scaled
+
+    def test_decompress_flags_are_forwarded_and_checked(
+            self, jpeg_instance, encoded_sample_jpeg, monkeypatch):
+        native_set = jpeg_instance._TurboJPEG__set
+        calls = []
+
+        def recording_set(handle, parameter, value):
+            calls.append((parameter, value))
+            return native_set(handle, parameter, value)
+
+        monkeypatch.setattr(
+            jpeg_instance, '_TurboJPEG__set', recording_set)
+        jpeg_instance.decode(
+            encoded_sample_jpeg,
+            flags=(
+                TJFLAG_BOTTOMUP | TJFLAG_ACCURATEDCT |
+                TJFLAG_STOPONWARNING
+            ),
+        )
+
+        assert (TJPARAM_BOTTOMUP, 1) in calls
+        assert (TJPARAM_FASTDCT, 0) in calls
+        assert (TJPARAM_STOPONWARNING, 1) in calls
+
+    def test_native_flag_set_failure_is_not_silently_ignored(
+            self, jpeg_instance, sample_bgr_image, monkeypatch):
+        native_set = jpeg_instance._TurboJPEG__set
+
+        def failing_set(handle, parameter, value):
+            if parameter == TJPARAM_BOTTOMUP:
+                return -1
+            return native_set(handle, parameter, value)
+
+        def raise_native_error(handle):
+            raise OSError('injected tj3Set failure')
+
+        monkeypatch.setattr(jpeg_instance, '_TurboJPEG__set', failing_set)
+        monkeypatch.setattr(
+            jpeg_instance, '_TurboJPEG__report_error', raise_native_error)
+
+        with pytest.raises(OSError, match='injected tj3Set failure'):
+            jpeg_instance.encode(
+                sample_bgr_image, flags=TJFLAG_BOTTOMUP)
+
+    def test_operations_reject_flags_they_cannot_support(
+            self, jpeg_instance, encoded_sample_jpeg):
+        yuv, _ = jpeg_instance.decode_to_yuv(encoded_sample_jpeg)
+        width, height, subsample, _ = jpeg_instance.decode_header(
+            encoded_sample_jpeg)
+        calls = [
+            lambda: jpeg_instance.decode_to_yuv(
+                encoded_sample_jpeg, flags=TJFLAG_BOTTOMUP),
+            lambda: jpeg_instance.decode_to_yuv_planes(
+                encoded_sample_jpeg, flags=TJFLAG_FASTUPSAMPLE),
+            lambda: jpeg_instance.encode_from_yuv(
+                yuv, height, width, jpeg_subsample=subsample,
+                flags=TJFLAG_BOTTOMUP),
+            lambda: jpeg_instance.scale_with_quality(
+                encoded_sample_jpeg, flags=TJFLAG_FASTUPSAMPLE),
+        ]
+
+        for call in calls:
+            with pytest.raises(ValueError, match='Unsupported flags'):
+                call()
+
+    def test_conflicting_and_unknown_flags_are_rejected(
+            self, jpeg_instance, sample_bgr_image):
+        with pytest.raises(ValueError, match='mutually exclusive'):
+            jpeg_instance.encode(
+                sample_bgr_image,
+                flags=TJFLAG_FASTDCT | TJFLAG_ACCURATEDCT)
+        with pytest.raises(ValueError, match='Unsupported flags'):
+            jpeg_instance.encode(sample_bgr_image, flags=1 << 20)
+
+
+class TestPublicInputValidation:
+    """Regression coverage for PTJ-007."""
+
+    @pytest.mark.parametrize('pixel_format', [-1, 12, True, 1.5])
+    def test_invalid_pixel_formats_raise_public_errors(
+            self, jpeg_instance, sample_bgr_image, encoded_sample_jpeg,
+            pixel_format):
+        with pytest.raises((TypeError, ValueError)):
+            jpeg_instance.encode(
+                sample_bgr_image, pixel_format=pixel_format)
+        with pytest.raises((TypeError, ValueError)):
+            jpeg_instance.decode(
+                encoded_sample_jpeg, pixel_format=pixel_format)
+
+    @pytest.mark.parametrize('shape', [
+        (8, 8, 2),
+        (8, 8, 1, 1),
+    ])
+    def test_grayscale_rejects_ambiguous_shapes(
+            self, jpeg_instance, shape):
+        image8 = np.zeros(shape, dtype=np.uint8)
+        image12 = np.zeros(shape, dtype=np.uint16)
+
+        with pytest.raises(ValueError, match='Invalid shape'):
+            jpeg_instance.encode(image8, pixel_format=TJPF_GRAY)
+        with pytest.raises(ValueError, match='Invalid shape'):
+            jpeg_instance.encode_12bit(image12, pixel_format=TJPF_GRAY)
+        with pytest.raises(ValueError, match='Invalid shape'):
+            jpeg_instance.encode_16bit(image12, pixel_format=TJPF_GRAY)
+
+    @pytest.mark.parametrize('shape', [(8, 8), (8, 8, 1)])
+    def test_grayscale_accepts_only_documented_shapes(
+            self, jpeg_instance, shape):
+        image = np.arange(64, dtype=np.uint8).reshape(8, 8)
+        if len(shape) == 3:
+            image = image[:, :, None]
+
+        encoded = jpeg_instance.encode(
+            image, pixel_format=TJPF_GRAY,
+            jpeg_subsample=TJSAMP_GRAY)
+        decoded = jpeg_instance.decode(encoded, pixel_format=TJPF_GRAY)
+
+        assert decoded.shape == (8, 8, 1)
+
+    @pytest.mark.parametrize('lossless', [False, True])
+    @pytest.mark.parametrize('value', [4096, 65535])
+    def test_12bit_rejects_samples_outside_12bit_range(
+            self, jpeg_instance, lossless, value):
+        image = np.full((8, 8, 3), value, dtype=np.uint16)
+
+        with pytest.raises(ValueError, match='between 0 and 4095'):
+            jpeg_instance.encode_12bit(image, lossless=lossless)
+
+    @pytest.mark.parametrize('operation', ['encode', 'encode_12bit', 'encode_16bit'])
+    def test_encoders_reject_empty_dimensions(
+            self, jpeg_instance, operation):
+        dtype = np.uint8 if operation == 'encode' else np.uint16
+        image = np.empty((0, 8, 3), dtype=dtype)
+
+        with pytest.raises(ValueError, match='height'):
+            getattr(jpeg_instance, operation)(image)
+
+    @pytest.mark.parametrize('quality', [0, 101, -1, 1.5, True])
+    def test_lossy_encoders_validate_quality(
+            self, jpeg_instance, sample_bgr_image, quality):
+        with pytest.raises((TypeError, ValueError)):
+            jpeg_instance.encode(sample_bgr_image, quality=quality)
+        image12 = sample_bgr_image.astype(np.uint16) * 16
+        with pytest.raises((TypeError, ValueError)):
+            jpeg_instance.encode_12bit(image12, quality=quality)
+
+    @pytest.mark.parametrize('subsample', [-1, 7, True, 1.5])
+    def test_encoders_validate_subsampling(
+            self, jpeg_instance, sample_bgr_image, subsample):
+        with pytest.raises((TypeError, ValueError)):
+            jpeg_instance.encode(
+                sample_bgr_image, jpeg_subsample=subsample)
+
+    @pytest.mark.parametrize(('argument', 'value'), [
+        ('quality', 0),
+        ('jpeg_subsample', 999),
+    ])
+    def test_lossless_encoders_ignore_lossy_parameters(
+            self, jpeg_instance, sample_bgr_image, argument, value):
+        kwargs = {argument: value, 'lossless': True}
+
+        encoded8 = jpeg_instance.encode(sample_bgr_image, **kwargs)
+        decoded8 = jpeg_instance.decode(encoded8)
+        assert np.array_equal(decoded8, sample_bgr_image)
+
+        image12 = sample_bgr_image.astype(np.uint16) * 16
+        encoded12 = jpeg_instance.encode_12bit(image12, **kwargs)
+        decoded12 = jpeg_instance.decode_12bit(encoded12)
+        assert np.array_equal(decoded12, image12)
+
+
+class TestCropAndTransformRegressions:
+    """Regression coverage for PTJ-008 through PTJ-011."""
+
+    def test_441_mcu_dimensions_and_full_crop(self, jpeg_instance):
+        assert tjMCUWidth[TJSAMP_441] == 8
+        assert tjMCUHeight[TJSAMP_441] == 32
+        image = np.arange(65 * 65 * 3, dtype=np.uint8).reshape(65, 65, 3)
+        encoded = jpeg_instance.encode(
+            image, jpeg_subsample=TJSAMP_441)
+
+        cropped = jpeg_instance.crop(encoded, 0, 0, 65, 65)
+
+        assert jpeg_instance.decode_header(cropped)[:2] == (65, 65)
+
+    def test_crop_retains_partial_right_and_bottom_mcus(self, jpeg_instance):
+        image = np.arange(100 * 100 * 3, dtype=np.uint8).reshape(100, 100, 3)
+        encoded = jpeg_instance.encode(
+            image, jpeg_subsample=TJSAMP_422)
+
+        cropped = jpeg_instance.crop(encoded, 0, 0, 100, 100)
+
+        assert jpeg_instance.decode_header(cropped)[:2] == (100, 100)
+
+    def test_crop_preserve_mode_has_explicit_alignment_semantics(
+            self, jpeg_instance):
+        image = np.arange(100 * 100 * 3, dtype=np.uint8).reshape(100, 100, 3)
+        encoded = jpeg_instance.encode(
+            image, jpeg_subsample=TJSAMP_422)
+
+        expanded = jpeg_instance.crop(
+            encoded, 10, 0, 50, 32, preserve=False)
+        contained = jpeg_instance.crop(
+            encoded, 10, 0, 50, 32, preserve=True)
+
+        assert jpeg_instance.decode_header(expanded)[:2] == (60, 32)
+        assert jpeg_instance.decode_header(contained)[:2] == (44, 32)
+
+    def test_crop_multiple_zero_size_uses_native_remainder_semantics(
+            self, jpeg_instance):
+        image = np.arange(24 * 32 * 3, dtype=np.uint8).reshape(24, 32, 3)
+        encoded = jpeg_instance.encode(
+            image, jpeg_subsample=TJSAMP_444)
+
+        full, remainder = jpeg_instance.crop_multiple(
+            encoded, [(0, 0, 0, 0), (8, 8, 0, 0)])
+
+        assert jpeg_instance.decode_header(full)[:2] == (32, 24)
+        assert jpeg_instance.decode_header(remainder)[:2] == (24, 16)
+
+    def test_dqt_parser_handles_unsigned_and_multiple_tables(
+            self, jpeg_instance):
+        table_one = bytes([0x01]) + bytes([17]) * 64
+        table_zero = bytes([0x10]) + b''.join(
+            struct.pack('>H', 40000) for _ in range(64))
+        payload = table_one + table_zero
+        app_payload = b'metadata\xff\xdb\x00\x03\x00'
+        jpeg_data = (
+            b'\xff\xd8\xff\xe1' +
+            struct.pack('>H', len(app_payload) + 2) + app_payload +
+            b'\xff\xdb' + struct.pack('>H', len(payload) + 2) +
+            payload + b'\xff\xd9'
+        )
+
+        assert jpeg_instance._TurboJPEG__get_dc_dqt_element(
+            jpeg_data, 1) == 17
+        assert jpeg_instance._TurboJPEG__get_dc_dqt_element(
+            jpeg_data, 0) == 40000
+
+    def test_low_quality_dqt_and_background_luminance_are_not_inverted(
+            self, jpeg_instance):
+        image = np.full((16, 16, 3), 128, dtype=np.uint8)
+        encoded = jpeg_instance.encode(
+            image, quality=5, jpeg_subsample=TJSAMP_444)
+
+        assert jpeg_instance._TurboJPEG__get_dc_dqt_element(
+            encoded, 0) == 160
+        black, white = jpeg_instance.crop_multiple(
+            encoded,
+            [(0, 0, 32, 32), (0, 0, 32, 32)],
+            background_luminance=0.0,
+        )[0], jpeg_instance.crop_multiple(
+            encoded,
+            [(0, 0, 32, 32)],
+            background_luminance=1.0,
+        )[0]
+        black_pixels = jpeg_instance.decode(
+            black, pixel_format=TJPF_GRAY)[20:, 20:, 0]
+        white_pixels = jpeg_instance.decode(
+            white, pixel_format=TJPF_GRAY)[20:, 20:, 0]
+
+        assert black_pixels.mean() < 20
+        assert white_pixels.mean() > 235
+
+    def test_background_uses_first_component_quantization_table(
+            self, jpeg_instance):
+        image = np.full((16, 16, 1), 128, dtype=np.uint8)
+        encoded = bytearray(jpeg_instance.encode(
+            image, quality=50, pixel_format=TJPF_GRAY,
+            jpeg_subsample=TJSAMP_GRAY))
+
+        dqt_marker = encoded.index(b'\xff\xdb')
+        dqt_info = dqt_marker + 4
+        assert encoded[dqt_info] & 0x0F == 0
+        encoded[dqt_info] = (encoded[dqt_info] & 0xF0) | 1
+
+        sof_marker = encoded.index(b'\xff\xc0')
+        first_component_dqt = sof_marker + 12
+        assert encoded[first_component_dqt] == 0
+        encoded[first_component_dqt] = 1
+
+        remapped = bytes(encoded)
+        assert jpeg_instance.decode(remapped).shape == (16, 16, 3)
+        extended = jpeg_instance.crop_multiple(
+            remapped, [(0, 0, 32, 32)],
+            background_luminance=1.0)[0]
+        white_pixels = jpeg_instance.decode(
+            extended, pixel_format=TJPF_GRAY)[20:, 20:, 0]
+
+        assert white_pixels.mean() > 235
+
+    def test_12bit_background_luminance_uses_source_precision(
+            self, jpeg_instance):
+        image = np.full((16, 16, 3), 2048, dtype=np.uint16)
+        encoded = jpeg_instance.encode_12bit(
+            image, quality=50, jpeg_subsample=TJSAMP_444)
+
+        extended = jpeg_instance.crop_multiple(
+            encoded, [(0, 0, 32, 32)],
+            background_luminance=1.0)[0]
+        white_pixels = jpeg_instance.decode_12bit(
+            extended, pixel_format=TJPF_GRAY)[20:, 20:, 0]
+
+        assert white_pixels.mean() > 4000
+
+    def test_dqt_parser_handles_every_lossy_quality(self, jpeg_instance):
+        image = np.full((8, 8, 3), 127, dtype=np.uint8)
+
+        for quality in range(1, 101):
+            encoded = jpeg_instance.encode(
+                image, quality=quality, jpeg_subsample=TJSAMP_444)
+            coefficient = jpeg_instance._TurboJPEG__get_dc_dqt_element(
+                encoded, 0)
+            assert coefficient > 0
+
+    def test_transform_callback_uses_native_return_convention(self):
+        assert fill_background(
+            None, CroppingRegion(), CroppingRegion(), 1, 0, None) == 0
+        assert fill_background(
+            None,
+            CroppingRegion(0, 0, 8, 8),
+            CroppingRegion(0, 0, 8, 8),
+            0,
+            0,
+            None,
+        ) == -1
+
+
+class TestScaleWithQualityResources:
+    """Regression coverage for PTJ-012."""
+
+    def test_scale_uses_uint8_yuv_and_separate_handle_lifetimes(
+            self, jpeg_instance, encoded_sample_jpeg, monkeypatch):
+        native_zeros = np.zeros
+        native_init = jpeg_instance._TurboJPEG__init
+        native_destroy = jpeg_instance._TurboJPEG__destroy
+        allocations = []
+        lifecycle = []
+
+        def recording_zeros(shape, *args, **kwargs):
+            result = native_zeros(shape, *args, **kwargs)
+            allocations.append(result)
+            return result
+
+        def recording_init(kind):
+            lifecycle.append(('init', kind))
+            return native_init(kind)
+
+        def recording_destroy(handle):
+            lifecycle.append(('destroy', None))
+            native_destroy(handle)
+
+        monkeypatch.setattr('turbojpeg.np.zeros', recording_zeros)
+        monkeypatch.setattr(
+            jpeg_instance, '_TurboJPEG__init', recording_init)
+        monkeypatch.setattr(
+            jpeg_instance, '_TurboJPEG__destroy', recording_destroy)
+
+        result = jpeg_instance.scale_with_quality(encoded_sample_jpeg)
+
+        assert result.startswith(b'\xff\xd8')
+        assert len(allocations) == 1
+        assert allocations[0].dtype == np.uint8
+        assert allocations[0].nbytes == allocations[0].size
+        assert lifecycle == [
+            ('init', TJINIT_DECOMPRESS),
+            ('destroy', None),
+            ('init', TJINIT_COMPRESS),
+            ('destroy', None),
+        ]
+
 
 def _make_minimal_srgb_icc():
     """Build a minimal but structurally valid ICC profile for sRGB."""
@@ -1872,6 +2962,40 @@ class TestICCProfile:
         assert extracted_icc is not None, "ICC profile missing after roundtrip"
         assert extracted_icc == MINIMAL_SRGB_ICC, \
             f"ICC profile mismatch: expected {len(MINIMAL_SRGB_ICC)} bytes, got {len(extracted_icc) if extracted_icc else 0}"
+
+    def test_icc_profile_in_place_encode_does_not_reallocate(
+            self, jpeg_instance, sample_bgr_image):
+        """ICC bytes are included when validating an in-place destination."""
+        buffer_size = (
+            jpeg_instance.buffer_size(sample_bgr_image) +
+            len(MINIMAL_SRGB_ICC)
+        )
+        dst = bytearray(buffer_size)
+
+        result, n_bytes = jpeg_instance.encode(
+            sample_bgr_image,
+            dst=dst,
+            icc_profile=MINIMAL_SRGB_ICC,
+        )
+
+        assert result is dst
+        jpeg_data = bytes(dst[:n_bytes])
+        assert jpeg_instance.get_icc_profile(jpeg_data) == MINIMAL_SRGB_ICC
+
+    def test_icc_profile_rejects_destination_without_profile_capacity(
+            self, jpeg_instance, sample_bgr_image):
+        """A normal JPEG buffer is too small once an ICC profile is attached."""
+        dst = bytearray(jpeg_instance.buffer_size(sample_bgr_image))
+        before = bytes(dst)
+
+        with pytest.raises(ValueError, match='buffer is too small'):
+            jpeg_instance.encode(
+                sample_bgr_image,
+                dst=dst,
+                icc_profile=MINIMAL_SRGB_ICC,
+            )
+
+        assert bytes(dst) == before
 
 
 if __name__ == '__main__':

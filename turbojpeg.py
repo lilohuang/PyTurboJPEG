@@ -23,16 +23,32 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '2.4.0'
+__version__ = '2.5.0'
 
-from ctypes import *
+from ctypes import (
+    CFUNCTYPE,
+    POINTER,
+    Structure,
+    byref,
+    c_char_p,
+    c_int,
+    c_short,
+    c_size_t,
+    c_ubyte,
+    c_ushort,
+    c_void_p,
+    cast,
+    cdll,
+    pointer,
+    string_at,
+)
 from ctypes.util import find_library
+from typing import NamedTuple
 import platform
 import numpy as np
-import math
 import warnings
 import os
-from struct import unpack, calcsize
+from struct import unpack
 
 # default libTurboJPEG library path
 DEFAULT_LIB_PATHS = {
@@ -138,7 +154,8 @@ tjPixelSize = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
 #  - 8x16 for 4:4:0
 #  - 16x16 for 4:2:0
 #  - 32x8 for 4:1:1
-tjMCUWidth = [8, 16, 16, 8, 8, 32]
+#  - 8x32 for 4:4:1
+tjMCUWidth = [8, 16, 16, 8, 8, 32, 8]
 
 # MCU block height (in pixels) for a given level of chrominance subsampling.
 # MCU block sizes:
@@ -147,7 +164,8 @@ tjMCUWidth = [8, 16, 16, 8, 8, 32]
 #  - 8x16 for 4:4:0
 #  - 16x16 for 4:2:0
 #  - 32x8 for 4:1:1
-tjMCUHeight = [8, 8, 16, 8, 16, 8]
+#  - 8x32 for 4:4:1
+tjMCUHeight = [8, 8, 16, 8, 16, 8, 32]
 
 # miscellaneous flags
 # see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
@@ -191,15 +209,54 @@ TJPARAM_RESTARTROWS = 19
 TJPARAM_XDENSITY = 20
 TJPARAM_YDENSITY = 21
 TJPARAM_DENSITYUNITS = 22
-TJPARAM_MAXPIXELS = 23
-TJPARAM_MAXMEMORY = 24
+TJPARAM_MAXMEMORY = 23
+TJPARAM_MAXPIXELS = 24
 TJPARAM_SAVEMARKERS = 25
+
+# Resource limits are opt-in so that very large trusted-image workflows retain
+# libjpeg-turbo's full supported range.  Applications that process untrusted
+# JPEG sources should configure finite limits for their deployment.
+DEFAULT_MAX_PIXELS = 0
+DEFAULT_MAX_MEMORY = 0
+DEFAULT_SCAN_LIMIT = 0
+
+_MAX_TJPARAM_VALUE = (1 << 31) - 1
+_LEGACY_SCAN_LIMIT = 500
+
+_DCT_FLAGS = TJFLAG_FASTDCT | TJFLAG_ACCURATEDCT
+_PACKED_DECOMPRESS_FLAGS = (
+    TJFLAG_BOTTOMUP | TJFLAG_FASTUPSAMPLE | _DCT_FLAGS |
+    TJFLAG_STOPONWARNING | TJFLAG_LIMITSCANS
+)
+_YUV_DECOMPRESS_FLAGS = (
+    _DCT_FLAGS | TJFLAG_STOPONWARNING | TJFLAG_LIMITSCANS
+)
+_PACKED_COMPRESS_FLAGS = (
+    TJFLAG_BOTTOMUP | _DCT_FLAGS | TJFLAG_STOPONWARNING |
+    TJFLAG_PROGRESSIVE
+)
+_YUV_COMPRESS_FLAGS = (
+    _DCT_FLAGS | TJFLAG_STOPONWARNING | TJFLAG_PROGRESSIVE
+)
+_SCALE_FLAGS = (
+    _DCT_FLAGS | TJFLAG_STOPONWARNING | TJFLAG_PROGRESSIVE |
+    TJFLAG_LIMITSCANS
+)
 
 class CroppingRegion(Structure):
     _fields_ = [("x", c_int), ("y", c_int), ("w", c_int), ("h", c_int)]
 
 class ScalingFactor(Structure):
     _fields_ = ('num', c_int), ('denom', c_int)
+
+
+class YUVPlaneInfo(NamedTuple):
+    """Location and dimensions of one plane in a unified YUV buffer."""
+
+    offset: int
+    stride: int
+    width: int
+    height: int
 
 CUSTOMFILTER = CFUNCTYPE(
     c_int,
@@ -243,7 +300,9 @@ MCU_WIDTH = 8
 MCU_HEIGHT = 8
 MCU_SIZE = 64
 
-def fill_background(coeffs_ptr, arrayRegion, planeRegion, componentID, transformID, transform_ptr):
+def _fill_background(
+        coeffs_ptr, arrayRegion, planeRegion, componentID, transformID,
+        transform_ptr):
     """Callback function for filling extended crop images with background
     color. The callback can be called multiple times for each component, each
     call providing a region (defined by arrayRegion) of the image.
@@ -327,7 +386,20 @@ def fill_background(coeffs_ptr, arrayRegion, planeRegion, componentID, transform
         if y_end > y_start and x_end > 0:
             coeffs[y_start:y_end, 0:x_end, 0] = background_data.lum
 
-    return 1
+    return None
+
+
+def fill_background(
+        coeffs_ptr, arrayRegion, planeRegion, componentID, transformID,
+        transform_ptr):
+    """TurboJPEG custom filter that converts Python failures to native errors."""
+    try:
+        _fill_background(
+            coeffs_ptr, arrayRegion, planeRegion, componentID, transformID,
+            transform_ptr)
+    except Exception:
+        return -1
+    return 0
 
 def split_byte_into_nibbles(value):
     """Split byte int into 2 nibbles (4 bits)."""
@@ -336,8 +408,36 @@ def split_byte_into_nibbles(value):
     return first, second
 
 class TurboJPEG(object):
-    """A Python wrapper of libjpeg-turbo for decoding and encoding JPEG image."""
-    def __init__(self, lib_path=None):
+    """A Python wrapper of libjpeg-turbo for JPEG encoding and decoding.
+
+    Parameters
+    ----------
+    lib_path : str or None
+        Explicit path to libturbojpeg, or None to locate it automatically.
+    max_pixels : int
+        Maximum source image size in pixels for decompression and lossless
+        transforms.  The default 0 disables the limit.
+    max_memory : int
+        Maximum intermediate-buffer memory in megabytes for decompression and
+        lossless transforms.  The default 0 disables the limit.
+    scan_limit : int
+        Maximum progressive JPEG scan count for decompression and lossless
+        transforms.  The default 0 disables the limit.
+    """
+    __resource_limit_warning_issued = False
+
+    def __init__(
+            self, lib_path=None, max_pixels=DEFAULT_MAX_PIXELS,
+            max_memory=DEFAULT_MAX_MEMORY, scan_limit=DEFAULT_SCAN_LIMIT):
+        self.__max_pixels = self.__validate_resource_limit(
+            'max_pixels', max_pixels)
+        self.__max_memory = self.__validate_resource_limit(
+            'max_memory', max_memory)
+        self.__scan_limit = self.__validate_resource_limit(
+            'scan_limit', scan_limit)
+        self.__source_limits_enabled = bool(
+            self.__max_pixels or self.__max_memory or self.__scan_limit)
+
         turbo_jpeg = cdll.LoadLibrary(
             self.__find_turbojpeg() if lib_path is None else lib_path)
         
@@ -545,6 +645,21 @@ class TurboJPEG(object):
         except AttributeError:
             self.__set_icc_profile = None
 
+        # MAXMEMORY and MAXPIXELS were added in libjpeg-turbo 3.0.2.  Keep
+        # compatibility with 3.0.0/3.0.1, for which max_pixels can still be
+        # enforced safely in Python before output allocation.
+        self.__supports_native_resource_limits = \
+            self.__detect_native_resource_limits()
+        if self.__max_memory and not self.__supports_native_resource_limits \
+                and not TurboJPEG.__resource_limit_warning_issued:
+            warnings.warn(
+                'libjpeg-turbo 3.0.2 or later is required to enforce '
+                'max_memory; max_pixels and scan_limit remain enforced',
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            TurboJPEG.__resource_limit_warning_issued = True
+
     def decode_header(self, jpeg_buf, return_precision=False):
         """decodes JPEG header and returns image properties as a tuple.
         
@@ -583,6 +698,8 @@ class TurboJPEG(object):
         """
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
+            if self.__source_limits_enabled:
+                self.__apply_source_limits(handle)
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             status = self.__decompress_header(handle, src_addr, jpeg_array.size)
@@ -596,6 +713,8 @@ class TurboJPEG(object):
             # Check for errors (tj3Get returns -1 on error)
             if width < 0 or height < 0 or jpeg_subsample < 0 or jpeg_colorspace < 0:
                 self.__report_error(handle)
+            if self.__max_pixels:
+                self.__enforce_max_pixels(handle, width, height)
             
             if return_precision:
                 precision = self.__get(handle, TJPARAM_PRECISION)
@@ -645,6 +764,8 @@ class TurboJPEG(object):
                 'Please upgrade to libjpeg-turbo 3.1 or later.')
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
+            if self.__source_limits_enabled:
+                self.__apply_source_limits(handle)
             # Set TJPARAM_SAVEMARKERS to 2 (APP2) so the decompressor
             # retains ICC profile markers during header parsing.
             if self.__set(handle, TJPARAM_SAVEMARKERS, 2) != 0:
@@ -654,6 +775,8 @@ class TurboJPEG(object):
             status = self.__decompress_header(handle, src_addr, jpeg_array.size)
             if status != 0:
                 self.__report_error(handle)
+            if self.__max_pixels:
+                self.__enforce_max_pixels(handle)
             icc_buf = c_void_p()
             icc_size = c_size_t()
             status = self.__get_icc_profile(handle, byref(icc_buf), byref(icc_size))
@@ -696,9 +819,11 @@ class TurboJPEG(object):
             raise NotImplementedError(
                 'tj3SetICCProfile is not available in the loaded libturbojpeg. '
                 'Please upgrade to libjpeg-turbo 3.1 or later.')
-        icc_array = np.frombuffer(icc_buf, dtype=np.uint8)
+        icc_view = self.__get_buffer_view(
+            icc_buf, "'icc_buf' argument", writable=False)
+        icc_array = np.frombuffer(icc_view, dtype=np.uint8)
         icc_addr = self.__getaddr(icc_array)
-        status = self.__set_icc_profile(handle, icc_addr, len(icc_buf))
+        status = self.__set_icc_profile(handle, icc_addr, icc_view.nbytes)
         if status != 0:
             self.__report_error(handle)
 
@@ -716,24 +841,21 @@ class TurboJPEG(object):
         flags : int
             Decompression flags
         dst : ndarray or None
-            Destination array (optional)
+            Destination array (optional). It must have the exact output shape,
+            dtype uint8, C-contiguous storage, and writable memory.
             
         Returns
         -------
         ndarray
             Decoded image as numpy array (uint8)
         """
+        pixel_format = self.__validate_pixel_format(pixel_format)
+        flags = self.__validate_flags(
+            flags, _PACKED_DECOMPRESS_FLAGS, 'decode()')
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
-            # Set decompression parameters using tj3Set
-            if flags & TJFLAG_BOTTOMUP:
-                self.__set(handle, TJPARAM_BOTTOMUP, 1)
-            if flags & TJFLAG_FASTUPSAMPLE:
-                self.__set(handle, TJPARAM_FASTUPSAMPLE, 1)
-            if flags & TJFLAG_FASTDCT:
-                self.__set(handle, TJPARAM_FASTDCT, 1)
-            if flags & TJFLAG_STOPONWARNING:
-                self.__set(handle, TJPARAM_STOPONWARNING, 1)
+            if flags or self.__source_limits_enabled:
+                self.__apply_decompress_flags(handle, flags)
             
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
@@ -741,17 +863,27 @@ class TurboJPEG(object):
                 self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
             
             dtype = np.uint8
-            if ((type(dst) == np.ndarray) and
-                (dst.shape == (scaled_height, scaled_width, tjPixelSize[pixel_format])) and
-                (dst.dtype == dtype)):
-                img_array = dst
-            else:
+            expected_shape = (
+                scaled_height, scaled_width, tjPixelSize[pixel_format])
+            if dst is None:
                 img_array = np.empty(
-                    [scaled_height, scaled_width, tjPixelSize[pixel_format]],
-                    dtype=dtype)
+                    expected_shape, dtype=dtype)
+            else:
+                if not isinstance(dst, np.ndarray):
+                    raise TypeError("'dst' argument must be a numpy array")
+                if dst.shape != expected_shape:
+                    raise ValueError(
+                        "'dst' array must have shape {}".format(
+                            expected_shape))
+                if dst.dtype != dtype:
+                    raise ValueError("'dst' array must have dtype uint8")
+                if not dst.flags.c_contiguous:
+                    raise ValueError("'dst' array must be C-contiguous")
+                if not dst.flags.writeable:
+                    raise ValueError("'dst' array must be writable")
+                img_array = dst
             dest_addr = self.__getaddr(img_array)
-            # pitch should be width * bytes_per_pixel (samples per row)
-            pitch = scaled_width * tjPixelSize[pixel_format]
+            pitch = img_array.strides[0]
             status = self.__decompress(
                 handle, src_addr, jpeg_array.size, dest_addr, pitch, pixel_format)
             
@@ -761,53 +893,103 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def decode_to_yuv(self, jpeg_buf, scaling_factor=None, pad=4, flags=0):
-        """decodes JPEG memory buffer to yuv array."""
+    def decode_to_yuv(
+            self, jpeg_buf, scaling_factor=None, pad=4, flags=0,
+            return_metadata=False):
+        """Decode JPEG data to a zero-initialized unified planar YUV buffer.
+
+        By default the second return value is the backward-compatible list of
+        ``(height, width)`` plane sizes.  If ``return_metadata`` is true, it is
+        instead a list of :class:`YUVPlaneInfo` entries with explicit offsets,
+        strides, valid widths, and heights.
+        """
+        if type(return_metadata) is not bool and not isinstance(
+                return_metadata, np.bool_):
+            raise TypeError("'return_metadata' argument must be a boolean")
+        pad = self.__validate_alignment(pad, 'pad')
+        if type(flags) is not int or flags != 0:
+            flags = self.__validate_flags(
+                flags, _YUV_DECOMPRESS_FLAGS, 'decode_to_yuv()')
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
+            if flags or self.__source_limits_enabled:
+                self.__apply_decompress_flags(handle, flags)
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             scaled_width, scaled_height, jpeg_subsample, _ = \
                 self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
             buffer_size = self.__buffer_size_YUV(scaled_width, pad, scaled_height, jpeg_subsample)
-            buffer_array = np.empty(buffer_size, dtype=np.uint8)
+            if buffer_size == 0:
+                self.__report_error(handle)
+            buffer_array = np.zeros(buffer_size, dtype=np.uint8)
             dest_addr = self.__getaddr(buffer_array)
             status = self.__decompressToYUV(
                 handle, src_addr, jpeg_array.size, dest_addr, pad)
             if status != 0:
                 self.__report_error(handle)
-            plane_sizes = list()
-            plane_sizes.append((scaled_height, scaled_width))
-            if jpeg_subsample != TJSAMP_GRAY:
-                for i in range(1, 3):
-                    plane_sizes.append((
-                        self.__plane_height(i, scaled_height, jpeg_subsample),
-                        self.__plane_width(i, scaled_width, jpeg_subsample)))
+            plane_sizes = self.__get_yuv_plane_sizes(
+                scaled_width, scaled_height, jpeg_subsample)
+            if return_metadata:
+                offset = 0
+                plane_metadata = []
+                for height, width in plane_sizes:
+                    stride = ((width + pad - 1) // pad) * pad
+                    plane_metadata.append(YUVPlaneInfo(
+                        offset=offset,
+                        stride=stride,
+                        width=width,
+                        height=height,
+                    ))
+                    offset += stride * height
+                if offset != buffer_array.size:
+                    raise RuntimeError(
+                        'Unexpected unified YUV buffer layout')
+                return buffer_array, plane_metadata
             return buffer_array, plane_sizes
         finally:
             self.__destroy(handle)
 
     def decode_to_yuv_planes(self, jpeg_buf, scaling_factor=None, strides=(0, 0, 0), flags=0):
-        """decodes JPEG memory buffer to yuv planes."""
+        """Decode JPEG data to zero-initialized planar YUV arrays."""
+        if type(flags) is not int or flags != 0:
+            flags = self.__validate_flags(
+                flags, _YUV_DECOMPRESS_FLAGS, 'decode_to_yuv_planes()')
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
+            if flags or self.__source_limits_enabled:
+                self.__apply_decompress_flags(handle, flags)
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             scaled_width, scaled_height, jpeg_subsample, _ = \
                 self.__get_header_and_dimensions(handle, jpeg_array.size, src_addr, scaling_factor)
-            num_planes = 3
-            if jpeg_subsample == TJSAMP_GRAY:
-                num_planes = 1
+            num_planes = 1 if jpeg_subsample == TJSAMP_GRAY else 3
+            try:
+                strides = tuple(strides)
+            except TypeError as exc:
+                raise TypeError("'strides' argument must be a sequence") from exc
+            if len(strides) < num_planes:
+                raise ValueError(
+                    "'strides' argument must provide {} value(s)".format(
+                        num_planes))
             strides_addr = (c_int * num_planes)()
             dest_addr = (POINTER(c_ubyte) * num_planes)()
             planes = list()
             for i in range(num_planes):
-                if strides[i] == 0:
-                    strides_addr[i] = self.__plane_width(i, scaled_width, jpeg_subsample)
-                else:
-                    strides_addr[i] = strides[i]
-                planes.append(np.empty(
-                    (self.__plane_height(i, scaled_height, jpeg_subsample), strides_addr[i]), dtype=np.uint8))
+                plane_width = self.__plane_width(
+                    i, scaled_width, jpeg_subsample)
+                plane_height = self.__plane_height(
+                    i, scaled_height, jpeg_subsample)
+                stride = self.__validate_resource_limit(
+                    'strides[{}]'.format(i), strides[i])
+                if stride == 0:
+                    stride = plane_width
+                if stride < plane_width:
+                    raise ValueError(
+                        "'strides[{}]' must be at least {}".format(
+                            i, plane_width))
+                strides_addr[i] = stride
+                planes.append(np.zeros(
+                    (plane_height, stride), dtype=np.uint8))
                 dest_addr[i] = self.__getaddr(planes[i])
             status = self.__decompressToYUVPlanes(
                 handle, src_addr, jpeg_array.size, dest_addr, strides_addr)
@@ -832,8 +1014,10 @@ class TurboJPEG(object):
             Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.) - ignored if lossless=True
         flags : int
             Compression flags
-        dst : buffer or None
-            Destination buffer (optional)
+        dst : writable contiguous buffer or None
+            Destination buffer (optional). The buffer must be large enough for
+            the worst-case JPEG size. If provided, TurboJPEG is not allowed to
+            reallocate it.
         lossless : bool
             Enable lossless JPEG compression (default: False)
             When True, provides perfect reconstruction with larger file sizes.
@@ -848,131 +1032,250 @@ class TurboJPEG(object):
         bytes
             JPEG image data (lossy or lossless depending on lossless parameter)
         """
+        # Avoid generic validator call overhead for the overwhelmingly common
+        # tiny-image path while retaining the same dtype/shape/size checks.
+        if (type(img_array) is np.ndarray and
+                type(quality) is int and quality == 85 and
+                type(pixel_format) is int and pixel_format == TJPF_BGR and
+                type(jpeg_subsample) is int and
+                jpeg_subsample == TJSAMP_422 and
+                type(flags) is int and flags == 0 and lossless is False):
+            if img_array.dtype != np.uint8:
+                raise ValueError(
+                    'encode() requires uint8 array with values in range 0-255')
+            if img_array.ndim != 3 or img_array.shape[2] != 3:
+                raise ValueError(
+                    'Invalid shape for encode() with pixel_format={}: '
+                    'expected 3 channel(s)'.format(pixel_format))
+            height, width = img_array.shape[:2]
+            if not 1 <= height <= _MAX_TJPARAM_VALUE:
+                height = self.__validate_positive_integer('height', height)
+            if not 1 <= width <= _MAX_TJPARAM_VALUE:
+                width = self.__validate_positive_integer('width', width)
+            img_array = np.ascontiguousarray(img_array)
+        else:
+            if not lossless:
+                if not (type(quality) is int and 1 <= quality <= 100):
+                    quality = self.__validate_quality(quality)
+                if not (type(jpeg_subsample) is int and
+                        TJSAMP_444 <= jpeg_subsample <= TJSAMP_441):
+                    jpeg_subsample = self.__validate_subsampling(
+                        jpeg_subsample)
+            if type(flags) is not int or flags != 0:
+                flags = self.__validate_flags(
+                    flags, _PACKED_COMPRESS_FLAGS, 'encode()')
+            if lossless and flags & (TJFLAG_PROGRESSIVE | _DCT_FLAGS):
+                raise ValueError(
+                    'Progressive and DCT flags are not supported for lossless '
+                    'JPEG')
+            img_array, height, width, pixel_format = self.__prepare_image(
+                img_array, np.uint8, pixel_format, 'encode()')
+
         handle = self.__init(TJINIT_COMPRESS)
         try:
-            # Set compression parameters using tj3Set
-            # Enable lossless mode if requested
+            if flags:
+                self.__apply_compress_flags(handle, flags)
             if lossless:
-                if self.__set(handle, TJPARAM_LOSSLESS, 1) != 0:
-                    self.__report_error(handle)
+                self.__set_parameter(handle, TJPARAM_LOSSLESS, 1)
                 # In lossless mode, subsampling is automatically set to 4:4:4
                 # and quality parameter is ignored
             else:
-                # Set standard lossy parameters
-                if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
-                    self.__report_error(handle)
-                if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
-                    self.__report_error(handle)
-            if flags & TJFLAG_PROGRESSIVE:
-                if self.__set(handle, TJPARAM_PROGRESSIVE, 1) != 0:
-                    self.__report_error(handle)
-            if flags & TJFLAG_FASTDCT:
-                if self.__set(handle, TJPARAM_FASTDCT, 1) != 0:
-                    self.__report_error(handle)
-            
-            img_array = np.ascontiguousarray(img_array)
-            
-            # Validate dtype is uint8
-            if img_array.dtype != np.uint8:
-                raise ValueError('encode() requires uint8 array (values 0-255); use encode_12bit() for 12-bit images (uint16, 0-4095) or encode_16bit() for 16-bit images (uint16, 0-65535)')
-            
+                self.__set_parameter(
+                    handle, TJPARAM_SUBSAMP, jpeg_subsample)
+                self.__set_parameter(handle, TJPARAM_QUALITY, quality)
+
+            icc_size = 0
             if icc_profile is not None:
-                self.set_icc_profile(handle, icc_profile)
-            
-            if dst is not None and not self.__is_buffer(dst):
-                raise TypeError('\'dst\' argument must support buffer protocol')
-            if (dst is not None and
-                (len(dst) >= self.buffer_size(img_array, jpeg_subsample))):
-                dst_array = np.frombuffer(dst, dtype=np.uint8)
+                icc_view = self.__get_buffer_view(
+                    icc_profile, "'icc_profile' argument", writable=False)
+                icc_size = icc_view.nbytes
+                self.set_icc_profile(handle, icc_view)
+
+            if dst is not None:
+                dst_view = self.__get_buffer_view(
+                    dst, "'dst' argument", writable=True)
+                buffer_subsample = TJSAMP_444 if lossless else jpeg_subsample
+                required_size = self.__buffer_size(
+                    width, height, buffer_subsample) + icc_size
+                if dst_view.nbytes < required_size:
+                    raise ValueError(
+                        "'dst' buffer is too small: requires at least {} bytes, "
+                        "got {}".format(required_size, dst_view.nbytes))
+                if self.__set(handle, TJPARAM_NOREALLOC, 1) != 0:
+                    self.__report_error(handle)
+                dst_array = np.frombuffer(dst_view, dtype=np.uint8)
                 jpeg_buf = dst_array.ctypes.data_as(c_void_p)
-                jpeg_size = c_size_t(len(dst))
+                jpeg_size = c_size_t(dst_view.nbytes)
             else:
                 dst_array = None
                 jpeg_buf = c_void_p()
                 jpeg_size = c_size_t()
-            height, width = img_array.shape[:2]
-            channel = tjPixelSize[pixel_format]
-            if channel > 1 and (len(img_array.shape) < 3 or img_array.shape[2] != channel):
-                raise ValueError('Invalid shape for image data')
             
             src_addr = self.__getaddr(img_array)
-            status = self.__compress(
-                handle, src_addr, width, img_array.strides[0], height, pixel_format,
-                byref(jpeg_buf), byref(jpeg_size))
-            
-            if status != 0:
-                self.__report_error(handle)
-            if dst_array is None or jpeg_buf.value != dst_array.ctypes.data:
-                result = self.__copy_from_buffer(jpeg_buf.value, jpeg_size.value)
-                self.__free(jpeg_buf)
-            else:
-                result = dst
-            return result if dst is None else (result, jpeg_size.value)
+            try:
+                status = self.__compress(
+                    handle, src_addr, width, img_array.strides[0], height,
+                    pixel_format, byref(jpeg_buf), byref(jpeg_size))
+
+                if status != 0:
+                    self.__report_error(handle)
+                if dst_array is None:
+                    return self.__copy_from_buffer(
+                        jpeg_buf.value, jpeg_size.value)
+                if jpeg_buf.value != dst_array.ctypes.data:
+                    raise RuntimeError(
+                        'TurboJPEG unexpectedly reallocated the destination '
+                        'buffer')
+                return dst, jpeg_size.value
+            finally:
+                # TurboJPEG owns buffers that it allocated or reallocated.
+                # Never free the caller-provided destination buffer.
+                if jpeg_buf.value is not None and (
+                        dst_array is None or
+                        jpeg_buf.value != dst_array.ctypes.data):
+                    self.__free(jpeg_buf)
         finally:
             self.__destroy(handle)
 
-    def encode_from_yuv(self, img_array, height, width, quality=85, jpeg_subsample=TJSAMP_420, flags=0):
-        """encodes numpy array to JPEG memory buffer."""
+    def encode_from_yuv(
+            self, img_array, height, width, quality=85,
+            jpeg_subsample=TJSAMP_420, flags=0, align=4):
+        """Encode a unified planar uint8 YUV buffer to JPEG.
+
+        Parameters
+        ----------
+        img_array : buffer
+            C-contiguous uint8 buffer containing sequential Y, U, and V
+            planes in TurboJPEG's unified planar layout.
+        height, width : int
+            Source image dimensions in pixels.
+        quality : int
+            JPEG quality from 1 to 100.
+        jpeg_subsample : int
+            Chroma subsampling used by the YUV layout.
+        flags : int
+            Compression flags.
+        align : int
+            Power-of-two row alignment used by the YUV layout.
+
+        Returns
+        -------
+        bytes
+            Encoded JPEG image.
+        """
+        height = self.__validate_positive_integer('height', height)
+        width = self.__validate_positive_integer('width', width)
+        align = self.__validate_alignment(align)
+        quality = self.__validate_quality(quality)
+        jpeg_subsample = self.__validate_subsampling(jpeg_subsample)
+        flags = self.__validate_flags(
+            flags, _YUV_COMPRESS_FLAGS, 'encode_from_yuv()')
+
+        source_view = self.__get_buffer_view(
+            img_array, "'img_array' argument", writable=False)
+        source_array = np.asarray(source_view)
+        if source_array.dtype != np.uint8:
+            raise ValueError("'img_array' argument must have dtype uint8")
+
+        # Reject obviously short buffers without calling tj3YUVBufSize().
+        # This also avoids old libjpeg-turbo releases evaluating pathological
+        # alignments that cannot possibly fit in the supplied source buffer.
+        minimum_luma_stride = (
+            (width + align - 1) // align) * align
+        minimum_luma_size = minimum_luma_stride * height
+        if source_view.nbytes < minimum_luma_size:
+            raise ValueError(
+                "'img_array' buffer is too small: requires at least {} bytes, "
+                'got {}'.format(minimum_luma_size, source_view.nbytes))
+
+        required_size = self.__buffer_size_YUV(
+            width, align, height, jpeg_subsample)
+        if required_size == 0:
+            raise ValueError(
+                'Invalid YUV dimensions, alignment, or subsampling')
+        if source_view.nbytes < required_size:
+            raise ValueError(
+                "'img_array' buffer is too small: requires at least {} bytes, "
+                'got {}'.format(required_size, source_view.nbytes))
+
+        # Flatten the validated byte buffer without copying it.
+        source_array = np.frombuffer(source_view, dtype=np.uint8)
         handle = self.__init(TJINIT_COMPRESS)
         try:
-            # Set compression parameters using tj3Set
-            if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
-                self.__report_error(handle)
-            if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
-                self.__report_error(handle)
+            if flags:
+                self.__apply_compress_flags(handle, flags)
+            self.__set_parameter(handle, TJPARAM_SUBSAMP, jpeg_subsample)
+            self.__set_parameter(handle, TJPARAM_QUALITY, quality)
             
             jpeg_buf = c_void_p()
             jpeg_size = c_size_t()
-            img_array = np.ascontiguousarray(img_array)
-            src_addr = self.__getaddr(img_array)
-            status = self.__compressFromYUV(
-                handle, src_addr, width, 4, height,
-                byref(jpeg_buf), byref(jpeg_size))
-            if status != 0:
-                self.__report_error(handle)
-            dest_buf = create_string_buffer(jpeg_size.value)
-            memmove(dest_buf, jpeg_buf.value, jpeg_size.value)
-            self.__free(jpeg_buf)
-            return dest_buf.raw
+            try:
+                src_addr = self.__getaddr(source_array)
+                status = self.__compressFromYUV(
+                    handle, src_addr, width, align, height,
+                    byref(jpeg_buf), byref(jpeg_size))
+                if status != 0:
+                    self.__report_error(handle)
+                return self.__copy_from_buffer(
+                    jpeg_buf.value, jpeg_size.value)
+            finally:
+                if jpeg_buf.value is not None:
+                    self.__free(jpeg_buf)
         finally:
             self.__destroy(handle)
 
     def scale_with_quality(self, jpeg_buf, scaling_factor=None, quality=85, flags=0):
         """decompresstoYUV with scale factor, recompresstoYUV with quality factor"""
-        handle = self.__init(TJINIT_DECOMPRESS)
+        quality = self.__validate_quality(quality)
+        flags = self.__validate_flags(
+            flags, _SCALE_FLAGS, 'scale_with_quality()')
+
+        decompress_handle = self.__init(TJINIT_DECOMPRESS)
         try:
+            decompress_flags = flags & _YUV_DECOMPRESS_FLAGS
+            if decompress_flags or self.__source_limits_enabled:
+                self.__apply_decompress_flags(
+                    decompress_handle, decompress_flags)
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             scaled_width, scaled_height, jpeg_subsample, _ = self.__get_header_and_dimensions(
-                handle, jpeg_array.size, src_addr, scaling_factor)
+                decompress_handle, jpeg_array.size, src_addr, scaling_factor)
             buffer_YUV_size = self.__buffer_size_YUV(
                 scaled_width, 4, scaled_height, jpeg_subsample)
-            img_array = np.empty([buffer_YUV_size])
+            if buffer_YUV_size == 0:
+                self.__report_error(decompress_handle)
+            img_array = np.zeros(buffer_YUV_size, dtype=np.uint8)
             dest_addr = self.__getaddr(img_array)
             status = self.__decompressToYUV(
-                handle, src_addr, jpeg_array.size, dest_addr, 4)
+                decompress_handle, src_addr, jpeg_array.size, dest_addr, 4)
             if status != 0:
-                self.__report_error(handle)
-            self.__destroy(handle)
-            handle = self.__init(TJINIT_COMPRESS)
-            # Set compression parameters
-            if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
-                self.__report_error(handle)
-            if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
-                self.__report_error(handle)
+                self.__report_error(decompress_handle)
+        finally:
+            self.__destroy(decompress_handle)
+
+        compress_handle = self.__init(TJINIT_COMPRESS)
+        try:
+            compress_flags = flags & _YUV_COMPRESS_FLAGS
+            if compress_flags:
+                self.__apply_compress_flags(compress_handle, compress_flags)
+            self.__set_parameter(
+                compress_handle, TJPARAM_SUBSAMP, jpeg_subsample)
+            self.__set_parameter(compress_handle, TJPARAM_QUALITY, quality)
             jpeg_buf = c_void_p()
             jpeg_size = c_size_t()
-            status = self.__compressFromYUV(
-                handle, dest_addr, scaled_width, 4, scaled_height, byref(jpeg_buf),
-                byref(jpeg_size))
-            if status != 0:
-                self.__report_error(handle)
-            dest_buf = create_string_buffer(jpeg_size.value)
-            memmove(dest_buf, jpeg_buf.value, jpeg_size.value)
-            self.__free(jpeg_buf)
-            return dest_buf.raw
+            try:
+                status = self.__compressFromYUV(
+                    compress_handle, dest_addr, scaled_width, 4,
+                    scaled_height, byref(jpeg_buf), byref(jpeg_size))
+                if status != 0:
+                    self.__report_error(compress_handle)
+                return self.__copy_from_buffer(
+                    jpeg_buf.value, jpeg_size.value)
+            finally:
+                if jpeg_buf.value is not None:
+                    self.__free(jpeg_buf)
         finally:
-            self.__destroy(handle)
+            self.__destroy(compress_handle)
     
     def encode_12bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, lossless=False):
         """Encodes 12-bit numpy array (uint16) to JPEG memory buffer.
@@ -998,56 +1301,48 @@ class TurboJPEG(object):
         bytes
             JPEG image data (lossy or lossless depending on lossless parameter)
         """
+        if not lossless:
+            quality = self.__validate_quality(quality)
+            jpeg_subsample = self.__validate_subsampling(jpeg_subsample)
+        flags = self.__validate_flags(
+            flags, _PACKED_COMPRESS_FLAGS, 'encode_12bit()')
+        if lossless and flags & (TJFLAG_PROGRESSIVE | _DCT_FLAGS):
+            raise ValueError(
+                'Progressive and DCT flags are not supported for lossless '
+                'JPEG')
+        img_array, height, width, pixel_format = self.__prepare_image(
+            img_array, np.uint16, pixel_format, 'encode_12bit()',
+            maximum_value=4095)
+
         handle = self.__init(TJINIT_COMPRESS)
         try:
-            # Set compression parameters using tj3Set
-            # Enable lossless mode if requested
+            if flags:
+                self.__apply_compress_flags(handle, flags)
             if lossless:
-                if self.__set(handle, TJPARAM_LOSSLESS, 1) != 0:
-                    self.__report_error(handle)
+                self.__set_parameter(handle, TJPARAM_LOSSLESS, 1)
                 # In lossless mode, subsampling is automatically set to 4:4:4
                 # and quality parameter is ignored
             else:
-                # Set standard lossy parameters
-                if self.__set(handle, TJPARAM_SUBSAMP, jpeg_subsample) != 0:
-                    self.__report_error(handle)
-                if self.__set(handle, TJPARAM_QUALITY, quality) != 0:
-                    self.__report_error(handle)
-            if flags & TJFLAG_PROGRESSIVE:
-                if self.__set(handle, TJPARAM_PROGRESSIVE, 1) != 0:
-                    self.__report_error(handle)
-            if flags & TJFLAG_FASTDCT:
-                if self.__set(handle, TJPARAM_FASTDCT, 1) != 0:
-                    self.__report_error(handle)
-            
-            img_array = np.ascontiguousarray(img_array)
-            
-            # Validate dtype is uint16 for 12-bit precision
-            if img_array.dtype != np.uint16:
-                raise ValueError('encode_12bit() requires uint16 array with values in range 0-4095')
+                self.__set_parameter(
+                    handle, TJPARAM_SUBSAMP, jpeg_subsample)
+                self.__set_parameter(handle, TJPARAM_QUALITY, quality)
             
             jpeg_buf = c_void_p()
             jpeg_size = c_size_t()
-            height, width = img_array.shape[:2]
-            channel = tjPixelSize[pixel_format]
-            if channel > 1 and (len(img_array.shape) < 3 or img_array.shape[2] != channel):
-                raise ValueError('Invalid shape for image data')
-            
-            # 12-bit precision
-            src_addr = self.__getaddr_uint16(img_array)
-            # For 12-bit, stride is in samples (uint16), not bytes
-            # Note: uint16 is 2 bytes on all supported platforms
-            stride_samples = img_array.strides[0] // 2  # Convert bytes to uint16 count (2 bytes per uint16)
-            
-            status = self.__compress12(
-                handle, src_addr, width, stride_samples, height, pixel_format,
-                byref(jpeg_buf), byref(jpeg_size))
-            
-            if status != 0:
-                self.__report_error(handle)
-            result = self.__copy_from_buffer(jpeg_buf.value, jpeg_size.value)
-            self.__free(jpeg_buf)
-            return result
+            try:
+                src_addr = self.__getaddr_uint16(img_array)
+                # High-precision TurboJPEG strides are measured in samples.
+                stride_samples = img_array.strides[0] // 2
+                status = self.__compress12(
+                    handle, src_addr, width, stride_samples, height,
+                    pixel_format, byref(jpeg_buf), byref(jpeg_size))
+                if status != 0:
+                    self.__report_error(handle)
+                return self.__copy_from_buffer(
+                    jpeg_buf.value, jpeg_size.value)
+            finally:
+                if jpeg_buf.value is not None:
+                    self.__free(jpeg_buf)
         finally:
             self.__destroy(handle)
     
@@ -1071,48 +1366,36 @@ class TurboJPEG(object):
         bytes
             Lossless JPEG image data
         """
+        flags = self.__validate_flags(
+            flags, _PACKED_COMPRESS_FLAGS, 'encode_16bit()')
+        if flags & (TJFLAG_PROGRESSIVE | _DCT_FLAGS):
+            raise ValueError(
+                'Progressive and DCT flags are not supported for lossless '
+                'JPEG')
+        img_array, height, width, pixel_format = self.__prepare_image(
+            img_array, np.uint16, pixel_format, 'encode_16bit()')
+
         handle = self.__init(TJINIT_COMPRESS)
         try:
-            # Set compression parameters using tj3Set
-            # 16-bit requires lossless mode
-            if self.__set(handle, TJPARAM_LOSSLESS, 1) != 0:
-                self.__report_error(handle)
-            # In lossless mode, subsampling is automatically set to 4:4:4
-            if flags & TJFLAG_PROGRESSIVE:
-                if self.__set(handle, TJPARAM_PROGRESSIVE, 1) != 0:
-                    self.__report_error(handle)
-            if flags & TJFLAG_FASTDCT:
-                if self.__set(handle, TJPARAM_FASTDCT, 1) != 0:
-                    self.__report_error(handle)
-            
-            img_array = np.ascontiguousarray(img_array)
-            
-            # Validate dtype is uint16 for 16-bit precision
-            if img_array.dtype != np.uint16:
-                raise ValueError('encode_16bit() requires uint16 array with values in range 0-65535')
+            if flags:
+                self.__apply_compress_flags(handle, flags)
+            self.__set_parameter(handle, TJPARAM_LOSSLESS, 1)
             
             jpeg_buf = c_void_p()
             jpeg_size = c_size_t()
-            height, width = img_array.shape[:2]
-            channel = tjPixelSize[pixel_format]
-            if channel > 1 and (len(img_array.shape) < 3 or img_array.shape[2] != channel):
-                raise ValueError('Invalid shape for image data')
-            
-            # 16-bit precision
-            src_addr = self.__getaddr_uint16(img_array)
-            # For 16-bit, stride is in samples (uint16), not bytes
-            # Note: uint16 is 2 bytes on all supported platforms
-            stride_samples = img_array.strides[0] // 2  # Convert bytes to uint16 count (2 bytes per uint16)
-            
-            status = self.__compress16(
-                handle, src_addr, width, stride_samples, height, pixel_format,
-                byref(jpeg_buf), byref(jpeg_size))
-            
-            if status != 0:
-                self.__report_error(handle)
-            result = self.__copy_from_buffer(jpeg_buf.value, jpeg_size.value)
-            self.__free(jpeg_buf)
-            return result
+            try:
+                src_addr = self.__getaddr_uint16(img_array)
+                stride_samples = img_array.strides[0] // 2
+                status = self.__compress16(
+                    handle, src_addr, width, stride_samples, height,
+                    pixel_format, byref(jpeg_buf), byref(jpeg_size))
+                if status != 0:
+                    self.__report_error(handle)
+                return self.__copy_from_buffer(
+                    jpeg_buf.value, jpeg_size.value)
+            finally:
+                if jpeg_buf.value is not None:
+                    self.__free(jpeg_buf)
         finally:
             self.__destroy(handle)
     
@@ -1135,17 +1418,13 @@ class TurboJPEG(object):
         ndarray
             12-bit image as uint16 numpy array (values 0-4095)
         """
+        pixel_format = self.__validate_pixel_format(pixel_format)
+        flags = self.__validate_flags(
+            flags, _PACKED_DECOMPRESS_FLAGS, 'decode_12bit()')
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
-            # Set decompression parameters using tj3Set
-            if flags & TJFLAG_BOTTOMUP:
-                self.__set(handle, TJPARAM_BOTTOMUP, 1)
-            if flags & TJFLAG_FASTUPSAMPLE:
-                self.__set(handle, TJPARAM_FASTUPSAMPLE, 1)
-            if flags & TJFLAG_FASTDCT:
-                self.__set(handle, TJPARAM_FASTDCT, 1)
-            if flags & TJFLAG_STOPONWARNING:
-                self.__set(handle, TJPARAM_STOPONWARNING, 1)
+            if flags or self.__source_limits_enabled:
+                self.__apply_decompress_flags(handle, flags)
             
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
@@ -1197,17 +1476,13 @@ class TurboJPEG(object):
         IOError or OSError
             If the JPEG is not a 16-bit lossless JPEG image
         """
+        pixel_format = self.__validate_pixel_format(pixel_format)
+        flags = self.__validate_flags(
+            flags, _PACKED_DECOMPRESS_FLAGS, 'decode_16bit()')
         handle = self.__init(TJINIT_DECOMPRESS)
         try:
-            # Set decompression parameters using tj3Set
-            if flags & TJFLAG_BOTTOMUP:
-                self.__set(handle, TJPARAM_BOTTOMUP, 1)
-            if flags & TJFLAG_FASTUPSAMPLE:
-                self.__set(handle, TJPARAM_FASTUPSAMPLE, 1)
-            if flags & TJFLAG_FASTDCT:
-                self.__set(handle, TJPARAM_FASTDCT, 1)
-            if flags & TJFLAG_STOPONWARNING:
-                self.__set(handle, TJPARAM_STOPONWARNING, 1)
+            if flags or self.__source_limits_enabled:
+                self.__apply_decompress_flags(handle, flags)
             
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
@@ -1233,9 +1508,22 @@ class TurboJPEG(object):
             self.__destroy(handle)
 
     def crop(self, jpeg_buf, x, y, w, h, preserve=False, gray=False, copynone=False):
-        """losslessly crop a jpeg image with optional grayscale"""
+        """Losslessly crop a JPEG image with optional grayscale conversion.
+
+        The native transform requires an iMCU-aligned origin. With
+        ``preserve=False``, the origin is rounded down and the output expands
+        to retain the complete requested region. With ``preserve=True``, the
+        origin is rounded up and the output remains inside that region.
+        Partial iMCUs at the source's right and bottom edges are retained.
+        """
+        x = self.__validate_resource_limit('x', x)
+        y = self.__validate_resource_limit('y', y)
+        w = self.__validate_positive_integer('w', w)
+        h = self.__validate_positive_integer('h', h)
         handle = self.__init(TJINIT_TRANSFORM)
         try:
+            if self.__source_limits_enabled:
+                self.__apply_source_limits(handle)
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             # Get header information using tj3DecompressHeader
@@ -1245,6 +1533,9 @@ class TurboJPEG(object):
             width = self.__get(handle, TJPARAM_JPEGWIDTH)
             height = self.__get(handle, TJPARAM_JPEGHEIGHT)
             jpeg_subsample = self.__get(handle, TJPARAM_SUBSAMP)
+            if self.__max_pixels:
+                self.__enforce_max_pixels(handle, width, height)
+            jpeg_subsample = self.__validate_subsampling(jpeg_subsample)
             
             x, w = self.__axis_to_image_boundaries(
                 x, w, width, preserve, tjMCUWidth[jpeg_subsample])
@@ -1288,6 +1579,8 @@ class TurboJPEG(object):
         """
         handle = self.__init(TJINIT_TRANSFORM)
         try:
+            if self.__source_limits_enabled:
+                self.__apply_source_limits(handle)
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
 
@@ -1304,16 +1597,44 @@ class TurboJPEG(object):
             image_width = self.__get(handle, TJPARAM_JPEGWIDTH)
             image_height = self.__get(handle, TJPARAM_JPEGHEIGHT)
             jpeg_subsample = self.__get(handle, TJPARAM_SUBSAMP)
+            if self.__max_pixels:
+                self.__enforce_max_pixels(
+                    handle, image_width, image_height)
+            jpeg_subsample = self.__validate_subsampling(jpeg_subsample)
+
+            if isinstance(background_luminance, (bool, np.bool_)) or \
+                    not isinstance(
+                        background_luminance,
+                        (int, float, np.integer, np.floating)):
+                raise TypeError(
+                    "'background_luminance' argument must be a number")
+            background_luminance = float(background_luminance)
+            if not np.isfinite(background_luminance) or not \
+                    0.0 <= background_luminance <= 1.0:
+                raise ValueError(
+                    "'background_luminance' argument must be between 0 and 1")
 
             # Define cropping regions from input parameters and image size
             crop_regions = self.__define_cropping_regions(crop_parameters)
             number_of_operations = len(crop_regions)
+            if number_of_operations == 0:
+                raise ValueError("'crop_parameters' argument must not be empty")
 
             # Define crop transforms from cropping_regions
             crop_transforms = (TransformStruct * number_of_operations)()
             # Pre-compute luminance coefficient once for all crops
             lum_coefficient = None
+            callback_data_refs = []
+            callback_refs = []
             for i, crop_region in enumerate(crop_regions):
+                if crop_region.x >= image_width or \
+                        crop_region.y >= image_height:
+                    raise ValueError(
+                        'Crop origin must be inside the source image')
+                if crop_region.x % tjMCUWidth[jpeg_subsample] or \
+                        crop_region.y % tjMCUHeight[jpeg_subsample]:
+                    raise ValueError(
+                        'Crop origin must be aligned to the JPEG iMCU size')
                 # The fill_background callback is slow, only use it if needed
                 if self.__need_fill_background(
                     crop_region,
@@ -1332,6 +1653,8 @@ class TurboJPEG(object):
                         lum_coefficient
                     )
                     callback = CUSTOMFILTER(fill_background)
+                    callback_data_refs.append(callback_data)
+                    callback_refs.append(callback)
                     crop_transforms[i] = TransformStruct(
                         crop_region,
                         TJXOP_NONE,
@@ -1374,11 +1697,15 @@ class TurboJPEG(object):
         """
         handle = self.__init(TJINIT_TRANSFORM)
         try:
+            if self.__source_limits_enabled:
+                self.__apply_source_limits(handle)
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = self.__getaddr(jpeg_array)
             status = self.__decompress_header(handle, src_addr, jpeg_array.size)
             if status != 0:
                 self.__report_error(handle)
+            if self.__max_pixels:
+                self.__enforce_max_pixels(handle)
             # Without TJXOPT_CROP the cropping region is ignored and the whole
             # image is transformed, so the (zeroed) region needs no setup.
             transforms = (TransformStruct * 1)()
@@ -1391,7 +1718,12 @@ class TurboJPEG(object):
 
     def buffer_size(self, img_array, jpeg_subsample=TJSAMP_422):
         """Get maximum number of bytes of compressed jpeg data"""
-        height, width = img_array.shape[:2]
+        jpeg_subsample = self.__validate_subsampling(jpeg_subsample)
+        image = np.asarray(img_array)
+        if image.ndim < 2:
+            raise ValueError('Invalid shape for image data')
+        height = self.__validate_positive_integer('height', image.shape[0])
+        width = self.__validate_positive_integer('width', image.shape[1])
         return self.__buffer_size(width, height, jpeg_subsample)
 
     def __do_transform(self, handle, src_buf, src_size, number_of_transforms, transforms):
@@ -1444,9 +1776,143 @@ class TurboJPEG(object):
     @staticmethod
     def __copy_from_buffer(buffer, size):
         """Copy bytes from buffer to python bytes."""
-        dest_buf = create_string_buffer(size)
-        memmove(dest_buf, buffer, size)
-        return dest_buf.raw
+        return string_at(buffer, size)
+
+    @staticmethod
+    def __get_yuv_plane_sizes(width, height, jpeg_subsample):
+        """Calculate native YUV plane dimensions from sampling factors."""
+        horizontal = tjMCUWidth[jpeg_subsample] // MCU_WIDTH
+        vertical = tjMCUHeight[jpeg_subsample] // MCU_HEIGHT
+        chroma_width = (width + horizontal - 1) // horizontal
+        chroma_height = (height + vertical - 1) // vertical
+        plane_sizes = [(
+            chroma_height * vertical,
+            chroma_width * horizontal,
+        )]
+        if jpeg_subsample != TJSAMP_GRAY:
+            plane_sizes.extend((
+                (chroma_height, chroma_width),
+                (chroma_height, chroma_width),
+            ))
+        return plane_sizes
+
+    def __set_parameter(self, handle, parameter, value):
+        """Set a TurboJPEG parameter and surface every native failure."""
+        if self.__set(handle, parameter, value) != 0:
+            self.__report_error(handle)
+
+    @staticmethod
+    def __validate_flags(flags, supported, operation):
+        """Validate a legacy flag bitmask for a specific public operation."""
+        if type(flags) is int and flags == 0:
+            return 0
+        if isinstance(flags, (bool, np.bool_)) or not isinstance(
+                flags, (int, np.integer)):
+            raise TypeError("'flags' argument must be a non-negative integer")
+        flags = int(flags)
+        if flags < 0 or flags > _MAX_TJPARAM_VALUE:
+            raise ValueError(
+                "'flags' argument must be between 0 and {}".format(
+                    _MAX_TJPARAM_VALUE))
+        unsupported = flags & ~supported
+        if unsupported:
+            raise ValueError(
+                "Unsupported flags for {}: 0x{:x}".format(
+                    operation, unsupported))
+        if flags & TJFLAG_FASTDCT and flags & TJFLAG_ACCURATEDCT:
+            raise ValueError(
+                'TJFLAG_FASTDCT and TJFLAG_ACCURATEDCT are mutually '
+                'exclusive')
+        return flags
+
+    def __apply_decompress_flags(self, handle, flags):
+        """Map supported decompression flags to tj3 parameters."""
+        if self.__source_limits_enabled or flags & TJFLAG_LIMITSCANS:
+            self.__apply_source_limits(handle, flags)
+        if flags == 0:
+            return flags
+        parameters = (
+            (TJPARAM_BOTTOMUP, TJFLAG_BOTTOMUP),
+            (TJPARAM_FASTUPSAMPLE, TJFLAG_FASTUPSAMPLE),
+            (TJPARAM_STOPONWARNING, TJFLAG_STOPONWARNING),
+        )
+        for parameter, flag in parameters:
+            if flags & flag:
+                self.__set_parameter(handle, parameter, 1)
+        if flags & TJFLAG_FASTDCT:
+            self.__set_parameter(handle, TJPARAM_FASTDCT, 1)
+        elif flags & TJFLAG_ACCURATEDCT:
+            self.__set_parameter(handle, TJPARAM_FASTDCT, 0)
+        return flags
+
+    def __apply_compress_flags(self, handle, flags):
+        """Map supported compression flags to tj3 parameters."""
+        if flags == 0:
+            return flags
+        parameters = (
+            (TJPARAM_BOTTOMUP, TJFLAG_BOTTOMUP),
+            (TJPARAM_STOPONWARNING, TJFLAG_STOPONWARNING),
+            (TJPARAM_PROGRESSIVE, TJFLAG_PROGRESSIVE),
+        )
+        for parameter, flag in parameters:
+            if flags & flag:
+                self.__set_parameter(handle, parameter, 1)
+        if flags & TJFLAG_FASTDCT:
+            self.__set_parameter(handle, TJPARAM_FASTDCT, 1)
+        elif flags & TJFLAG_ACCURATEDCT:
+            self.__set_parameter(handle, TJPARAM_FASTDCT, 0)
+        return flags
+
+    def __apply_source_limits(self, handle, flags=0):
+        """Apply decompression/transform resource limits to a native handle."""
+        if not (self.__source_limits_enabled or flags & TJFLAG_LIMITSCANS):
+            return
+
+        scan_limit = self.__scan_limit
+        if flags & TJFLAG_LIMITSCANS and (
+                scan_limit == 0 or scan_limit > _LEGACY_SCAN_LIMIT):
+            scan_limit = _LEGACY_SCAN_LIMIT
+
+        parameters = []
+        if self.__supports_native_resource_limits:
+            if self.__max_memory:
+                parameters.append((TJPARAM_MAXMEMORY, self.__max_memory))
+            if self.__max_pixels:
+                parameters.append((TJPARAM_MAXPIXELS, self.__max_pixels))
+        if scan_limit:
+            parameters.append((TJPARAM_SCANLIMIT, scan_limit))
+        for parameter, value in parameters:
+            if self.__set(handle, parameter, value) != 0:
+                self.__report_error(handle)
+
+    def __detect_native_resource_limits(self):
+        """Return whether MAXMEMORY/MAXPIXELS are supported by the library."""
+        handle = self.__init(TJINIT_DECOMPRESS)
+        if not handle:
+            raise RuntimeError('Unable to initialize TurboJPEG decompressor')
+        try:
+            if self.__set(handle, TJPARAM_MAXMEMORY, 0) != 0:
+                return False
+            return self.__set(handle, TJPARAM_MAXPIXELS, 0) == 0
+        finally:
+            self.__destroy(handle)
+
+    def __enforce_max_pixels(self, handle, width=None, height=None):
+        """Reject oversized headers before allocating Python output memory."""
+        if self.__max_pixels == 0:
+            return
+        if width is None:
+            width = self.__get(handle, TJPARAM_JPEGWIDTH)
+        if height is None:
+            height = self.__get(handle, TJPARAM_JPEGHEIGHT)
+        if width < 0 or height < 0:
+            self.__report_error(handle)
+
+        pixel_count = width * height
+        if pixel_count > self.__max_pixels:
+            raise ValueError(
+                'JPEG image contains {} pixels, exceeding max_pixels={}'
+                .format(pixel_count, self.__max_pixels))
 
     def __get_header_and_dimensions(self, handle, jpeg_array_size, src_addr, scaling_factor):
         """returns scaled image dimensions and header data"""
@@ -1469,11 +1935,26 @@ class TurboJPEG(object):
         # Check for errors (tj3Get returns -1 on error)
         if width < 0 or height < 0 or jpeg_subsample < 0 or jpeg_colorspace < 0:
             self.__report_error(handle)
+        if self.__max_pixels:
+            self.__enforce_max_pixels(handle, width, height)
         
-        # Set scaling factor if provided - must be done AFTER reading header
+        # Set scaling factor if provided - must be done AFTER reading header.
+        # TurboJPEG ignores scaling for lossless JPEG images, so calculating a
+        # smaller destination in that case would allow the native decoder to
+        # write beyond the allocated numpy array.
         scaled_width = width
         scaled_height = height
         if scaling_factor is not None:
+            lossless = self.__get(handle, TJPARAM_LOSSLESS)
+            if lossless < 0:
+                self.__report_error(handle)
+            if lossless:
+                if scaling_factor != (1, 1):
+                    raise ValueError(
+                        'Decompression scaling is not supported for lossless '
+                        'JPEG images')
+                return (scaled_width, scaled_height, jpeg_subsample,
+                        jpeg_colorspace)
             num, denom = scaling_factor[0], scaling_factor[1]
             sf = ScalingFactor()
             sf.num = num
@@ -1489,27 +1970,24 @@ class TurboJPEG(object):
         
         return scaled_width, scaled_height, jpeg_subsample, jpeg_colorspace
 
-    def __axis_to_image_boundaries(self, a, b, img_boundary, preserve, mcuBlock):
+    def __axis_to_image_boundaries(
+            self, a, b, img_boundary, preserve, mcuBlock):
+        """Align a crop origin while retaining the source's partial edge."""
+        if a >= img_boundary:
+            raise ValueError('Crop origin must be inside the source image')
+        requested_end = min(a + b, img_boundary)
         if preserve:
-            original_a = a
-            a = int(math.ceil(float(original_a) / mcuBlock) * mcuBlock)
-            b -= (a - original_a)
-            if (a + b) > img_boundary:
-                b = img_boundary - a
+            a = ((a + mcuBlock - 1) // mcuBlock) * mcuBlock
         else:
-            img_b = img_boundary - (img_boundary % mcuBlock)
-            delta_a = a % mcuBlock
-            if a > img_b:
-                a = img_b
-            else:
-                a = a - delta_a
-            b = b + delta_a
-            if (a + b) > img_b:
-                b = img_b - a
+            a = (a // mcuBlock) * mcuBlock
+        b = requested_end - a
+        if b <= 0:
+            raise ValueError(
+                'Crop region contains no pixels after iMCU alignment')
         return a, b
 
-    @staticmethod
-    def __define_cropping_regions(crop_parameters):
+    @classmethod
+    def __define_cropping_regions(cls, crop_parameters):
         """Return list of crop regions from crop parameters
 
         Parameters
@@ -1524,10 +2002,32 @@ class TurboJPEG(object):
             List of crop operations, size is equal to the product of number of
             crop operations to perform in x and y direction.
         """
-        return [
-            CroppingRegion(x=crop[0], y=crop[1], w=crop[2], h=crop[3])
-            for crop in crop_parameters
-        ]
+        try:
+            crop_parameters = list(crop_parameters)
+        except TypeError as exc:
+            raise TypeError(
+                "'crop_parameters' argument must be an iterable") from exc
+        regions = []
+        for index, crop in enumerate(crop_parameters):
+            try:
+                if len(crop) != 4:
+                    raise ValueError
+                x, y, w, h = crop
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    'Crop parameter {} must contain (x, y, w, h)'.format(
+                        index)) from exc
+            regions.append(CroppingRegion(
+                x=cls.__validate_resource_limit(
+                    'crop_parameters[{}].x'.format(index), x),
+                y=cls.__validate_resource_limit(
+                    'crop_parameters[{}].y'.format(index), y),
+                w=cls.__validate_resource_limit(
+                    'crop_parameters[{}].w'.format(index), w),
+                h=cls.__validate_resource_limit(
+                    'crop_parameters[{}].h'.format(index), h),
+            ))
+        return regions
 
     @staticmethod
     def __need_fill_background(crop_region, image_size, background_luminance):
@@ -1557,9 +2057,46 @@ class TurboJPEG(object):
         )
 
     @staticmethod
-    def __find_dqt(jpeg_data, dqt_index):
-        """Return byte offset to quantification table with index dqt_index in
-        jpeg_data.
+    def __iter_jpeg_header_segments(jpeg_data):
+        """Yield marker and payload boundaries before entropy-coded data."""
+        jpeg_data = bytes(jpeg_data)
+        offset = 0
+        standalone_markers = set(range(0xD0, 0xDA)) | {0x01}
+        while offset < len(jpeg_data):
+            marker_start = jpeg_data.find(b'\xFF', offset)
+            if marker_start == -1:
+                return
+            marker_offset = marker_start + 1
+            while marker_offset < len(jpeg_data) and \
+                    jpeg_data[marker_offset] == 0xFF:
+                marker_offset += 1
+            if marker_offset >= len(jpeg_data):
+                raise ValueError('Truncated JPEG marker')
+
+            marker = jpeg_data[marker_offset]
+            offset = marker_offset + 1
+            if marker == 0x00:
+                continue
+            if marker in standalone_markers:
+                continue
+            # Header metadata needed by crop transforms must precede the first
+            # scan.  Do not interpret marker-like bytes in entropy-coded data.
+            if marker == 0xDA:
+                return
+            if offset + 2 > len(jpeg_data):
+                raise ValueError('Truncated JPEG segment')
+            segment_length = unpack('>H', jpeg_data[offset:offset + 2])[0]
+            if segment_length < 2:
+                raise ValueError('Invalid JPEG segment length')
+            segment_end = offset + segment_length
+            if segment_end > len(jpeg_data):
+                raise ValueError('Truncated JPEG segment')
+            yield marker, offset + 2, segment_end
+            offset = segment_end
+
+    @classmethod
+    def __find_dqt(cls, jpeg_data, dqt_index):
+        """Return the table-info offset for a DQT table in JPEG data.
 
         Parameters
         ----------
@@ -1571,26 +2108,60 @@ class TurboJPEG(object):
         Returns
         ----------
         Optional[int]
-            Byte offset to quantification table, or None if not found.
+            Byte offset to the matching table's Pq/Tq byte, or None.
         """
-        offset = 0
-        while offset < len(jpeg_data):
-            dct_table_offset = jpeg_data[offset:].find(b'\xFF\xDB')
-            if dct_table_offset == -1:
-                break
-            dct_table_offset += offset
-            dct_table_length = unpack(
-                '>H',
-                jpeg_data[dct_table_offset+2:dct_table_offset+4]
-            )[0]
-            dct_table_id_offset = dct_table_offset + 4
-            table_index, _ = split_byte_into_nibbles(
-                jpeg_data[dct_table_id_offset]
-            )
-            if table_index == dqt_index:
-                return dct_table_offset
-            offset += dct_table_offset+dct_table_length
-        return None
+        jpeg_data = bytes(jpeg_data)
+        matching_offset = None
+        for marker, segment_start, segment_end in \
+                cls.__iter_jpeg_header_segments(jpeg_data):
+            if marker == 0xDB:
+                if segment_start >= segment_end:
+                    raise ValueError('Invalid DQT segment length')
+                table_offset = segment_start
+                while table_offset < segment_end:
+                    precision, table_index = split_byte_into_nibbles(
+                        jpeg_data[table_offset])
+                    if precision not in (0, 1):
+                        raise ValueError(
+                            'Not valid precision definition in DQT')
+                    element_size = 1 if precision == 0 else 2
+                    next_table = table_offset + 1 + 64 * element_size
+                    if next_table > segment_end:
+                        raise ValueError('Truncated quantization table')
+                    if table_index == dqt_index:
+                        # A later DQT definition supersedes an earlier one.
+                        matching_offset = table_offset
+                    table_offset = next_table
+        return matching_offset
+
+    @classmethod
+    def __get_frame_precision_and_luminance_table(cls, jpeg_data):
+        """Return sample precision and first component's DQT selector."""
+        jpeg_data = bytes(jpeg_data)
+        sof_markers = {
+            0xC0, 0xC1, 0xC2, 0xC3,
+            0xC5, 0xC6, 0xC7,
+            0xC9, 0xCA, 0xCB,
+            0xCD, 0xCE, 0xCF,
+        }
+        for marker, segment_start, segment_end in \
+                cls.__iter_jpeg_header_segments(jpeg_data):
+            if marker not in sof_markers:
+                continue
+            if segment_end - segment_start < 9:
+                raise ValueError('Truncated JPEG frame header')
+            component_count = jpeg_data[segment_start + 5]
+            expected_size = 6 + 3 * component_count
+            if component_count == 0 or \
+                    segment_start + expected_size > segment_end:
+                raise ValueError('Truncated JPEG frame components')
+            precision = jpeg_data[segment_start]
+            table_index = jpeg_data[segment_start + 8]
+            if table_index > 3:
+                raise ValueError(
+                    'Invalid luminance quantization table selector')
+            return precision, table_index
+        raise ValueError('JPEG frame header not found')
 
     @classmethod
     def __get_dc_dqt_element(cls, jpeg_data, dqt_index):
@@ -1609,22 +2180,21 @@ class TurboJPEG(object):
         int
             Dc quantification element.
         """
-        dqt_offset = cls.__find_dqt(jpeg_data, dqt_index)
-        if dqt_offset is None:
+        table_offset = cls.__find_dqt(jpeg_data, dqt_index)
+        if table_offset is None:
             raise ValueError(
                 "Quantisation table {dqt_index} not found in header".format(
                     dqt_index=dqt_index)
             )
-        precision_offset = dqt_offset+4
-        precision = split_byte_into_nibbles(jpeg_data[precision_offset])[0]
+        precision = split_byte_into_nibbles(jpeg_data[table_offset])[0]
         if precision == 0:
-            unpack_type = '>b'
+            unpack_type = '>B'
         elif precision == 1:
-            unpack_type = '>h'
+            unpack_type = '>H'
         else:
-            raise ValueError('Not valid precision definition in dqt')
-        dc_offset = dqt_offset + 5
-        dc_length = calcsize(unpack_type)
+            raise ValueError('Not valid precision definition in DQT')
+        dc_offset = table_offset + 1
+        dc_length = 1 if precision == 0 else 2
         dc_value = unpack(
             unpack_type,
             jpeg_data[dc_offset:dc_offset+dc_length]
@@ -1634,10 +2204,9 @@ class TurboJPEG(object):
     @classmethod
     def __map_luminance_to_dc_dct_coefficient(cls, jpeg_data, luminance):
         """Map a luminance level (0 - 1) to quantified dc dct coefficient.
-        Before quantification dct coefficient have a range -1024 - 1023. This
-        is reduced upon quantification by the quantification factor. This
-        function maps the input luminance level range to the quantified dc dct
-        coefficient range.
+        The unquantized coefficient range depends on the JPEG sample precision.
+        This function maps the input luminance level to that range, then applies
+        the quantization factor selected by the first image component.
 
         Parameters
         ----------
@@ -1652,8 +2221,21 @@ class TurboJPEG(object):
             Quantified luminance dc dct coefficent.
         """
         luminance = min(max(luminance, 0), 1)
-        dc_dqt_coefficient = cls.__get_dc_dqt_element(jpeg_data, 0)
-        return int(round((luminance * 2047 - 1024) / dc_dqt_coefficient))
+        precision, table_index = \
+            cls.__get_frame_precision_and_luminance_table(jpeg_data)
+        if precision < 2 or precision > 12:
+            raise ValueError(
+                'Background fill requires a lossy JPEG image with no more '
+                'than 12 bits of precision')
+        dc_dqt_coefficient = cls.__get_dc_dqt_element(
+            jpeg_data, table_index)
+        if dc_dqt_coefficient <= 0:
+            raise ValueError('Luminance quantization coefficient must be positive')
+        maximum_sample = (1 << precision) - 1
+        sample_center = 1 << (precision - 1)
+        unquantized_dc = 8 * (
+            luminance * maximum_sample - sample_center)
+        return int(round(unquantized_dc / dc_dqt_coefficient))
 
     def __report_error(self, handle):
         """reports error while error occurred"""
@@ -1696,13 +2278,159 @@ class TurboJPEG(object):
         """returns the memory address for a given uint16 ndarray"""
         return cast(nda.__array_interface__['data'][0], POINTER(c_ushort))
 
-    def __is_buffer(self, x):
-        result = True
+    @staticmethod
+    def __validate_resource_limit(argument_name, value):
+        """Validate a non-negative value passed through tj3Set(int)."""
+        if type(value) is int and 0 <= value <= _MAX_TJPARAM_VALUE:
+            return value
+        if isinstance(value, (bool, np.bool_)) or not isinstance(
+                value, (int, np.integer)):
+            raise TypeError(
+                "'{}' argument must be a non-negative integer".format(
+                    argument_name))
+        value = int(value)
+        if value < 0 or value > _MAX_TJPARAM_VALUE:
+            raise ValueError(
+                "'{}' argument must be between 0 and {}".format(
+                    argument_name, _MAX_TJPARAM_VALUE))
+        return value
+
+    @staticmethod
+    def __validate_positive_integer(argument_name, value):
+        """Validate a positive integer that is passed to a native int."""
+        if type(value) is int and 1 <= value <= _MAX_TJPARAM_VALUE:
+            return value
+        if isinstance(value, (bool, np.bool_)) or not isinstance(
+                value, (int, np.integer)):
+            raise TypeError(
+                "'{}' argument must be a positive integer".format(
+                    argument_name))
+        value = int(value)
+        if value < 1 or value > _MAX_TJPARAM_VALUE:
+            raise ValueError(
+                "'{}' argument must be a positive integer no greater than {}"
+                .format(argument_name, _MAX_TJPARAM_VALUE))
+        return value
+
+    @staticmethod
+    def __validate_bounded_integer(argument_name, value, minimum, maximum):
+        """Validate an integer enum or numeric option within fixed bounds."""
+        if type(value) is int and minimum <= value <= maximum:
+            return value
+        if isinstance(value, (bool, np.bool_)) or not isinstance(
+                value, (int, np.integer)):
+            raise TypeError(
+                "'{}' argument must be an integer".format(argument_name))
+        value = int(value)
+        if value < minimum or value > maximum:
+            raise ValueError(
+                "'{}' argument must be between {} and {}".format(
+                    argument_name, minimum, maximum))
+        return value
+
+    @classmethod
+    def __validate_pixel_format(cls, pixel_format):
+        if type(pixel_format) is int and 0 <= pixel_format < len(tjPixelSize):
+            return pixel_format
+        return cls.__validate_bounded_integer(
+            'pixel_format', pixel_format, 0, len(tjPixelSize) - 1)
+
+    @classmethod
+    def __validate_subsampling(cls, jpeg_subsample):
+        if type(jpeg_subsample) is int and \
+                TJSAMP_444 <= jpeg_subsample <= TJSAMP_441:
+            return jpeg_subsample
+        return cls.__validate_bounded_integer(
+            'jpeg_subsample', jpeg_subsample, TJSAMP_444, TJSAMP_441)
+
+    @classmethod
+    def __validate_quality(cls, quality):
+        if type(quality) is int and 1 <= quality <= 100:
+            return quality
+        return cls.__validate_bounded_integer('quality', quality, 1, 100)
+
+    @classmethod
+    def __prepare_image(
+            cls, img_array, dtype, pixel_format, operation,
+            maximum_value=None):
+        """Validate and pack an image before exposing its memory to C."""
+        if not (type(pixel_format) is int and
+                0 <= pixel_format < len(tjPixelSize)):
+            pixel_format = cls.__validate_pixel_format(pixel_format)
+        image = img_array if type(img_array) is np.ndarray \
+            else np.asarray(img_array)
+        if image.dtype != dtype:
+            if dtype == np.uint8:
+                detail = 'uint8 array with values in range 0-255'
+            elif maximum_value == 4095:
+                detail = 'uint16 array with values in range 0-4095'
+            else:
+                detail = 'uint16 array with values in range 0-65535'
+            raise ValueError('{} requires {}'.format(operation, detail))
+
+        channels = tjPixelSize[pixel_format]
+        if channels == 1:
+            valid_shape = (
+                image.ndim == 2 or
+                (image.ndim == 3 and image.shape[2] == 1)
+            )
+        else:
+            valid_shape = image.ndim == 3 and image.shape[2] == channels
+        if not valid_shape:
+            raise ValueError(
+                'Invalid shape for {} with pixel_format={}: expected '
+                '{} channel(s)'.format(operation, pixel_format, channels))
+
+        height, width = image.shape[:2]
+        if not 1 <= height <= _MAX_TJPARAM_VALUE:
+            height = cls.__validate_positive_integer('height', height)
+        if not 1 <= width <= _MAX_TJPARAM_VALUE:
+            width = cls.__validate_positive_integer('width', width)
+        if maximum_value is not None and image.size \
+                and int(image.max()) > maximum_value:
+            raise ValueError(
+                '{} values must be between 0 and {}'.format(
+                    operation, maximum_value))
+        return np.ascontiguousarray(image), height, width, pixel_format
+
+    @classmethod
+    def __validate_alignment(cls, value, argument_name='align'):
+        """Validate a TurboJPEG YUV row alignment."""
+        if type(value) is int:
+            if 1 <= value <= _MAX_TJPARAM_VALUE \
+                    and not value & (value - 1):
+                return value
+            raise ValueError(
+                "'{}' argument must be a positive power of two".format(
+                    argument_name))
         try:
-            memoryview(x)
-        except Exception:
-            result = False
-        return result
+            value = cls.__validate_positive_integer(argument_name, value)
+        except ValueError as exc:
+            raise ValueError(
+                "'{}' argument must be a positive power of two".format(
+                    argument_name)) from exc
+        if value & (value - 1):
+            raise ValueError(
+                "'{}' argument must be a positive power of two".format(
+                    argument_name))
+        return value
+
+    @staticmethod
+    def __get_buffer_view(value, argument_name, writable):
+        """Return a contiguous memoryview suitable for a native call."""
+        try:
+            view = memoryview(value)
+        except TypeError as exc:
+            raise TypeError(
+                '{} must support the buffer protocol'.format(
+                    argument_name)) from exc
+        if not view.c_contiguous:
+            raise ValueError(
+                '{} must be C-contiguous'.format(argument_name))
+        if writable and view.readonly:
+            raise TypeError(
+                '{} must be writable'.format(argument_name))
+        return view
 
     @property
     def scaling_factors(self):
