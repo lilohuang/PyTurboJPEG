@@ -30,7 +30,7 @@ from turbojpeg import (
     TJPF_XBGR, TJPF_XRGB, TJPF_ABGR, TJPF_ARGB, TJPF_CMYK,
     TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_GRAY, TJSAMP_440, TJSAMP_411,
     TJSAMP_441,
-    TJCS_RGB, TJCS_YCbCr, TJCS_GRAY, TJCS_CMYK, TJCS_YCCK,
+    TJCS_RGB, TJCS_YCbCr, TJCS_GRAY, TJCS_CMYK, TJCS_YCCK, TJCS_DEFAULT,
     TJFLAG_ACCURATEDCT, TJFLAG_BOTTOMUP, TJFLAG_PROGRESSIVE,
     TJFLAG_FASTUPSAMPLE, TJFLAG_FASTDCT, TJFLAG_STOPONWARNING,
     TJFLAG_LIMITSCANS,
@@ -3095,6 +3095,9 @@ class TestJPEGColorspace:
             decode(actual, pixel_format=TJPF_RGB),
             decode(expected, pixel_format=TJPF_RGB))
 
+    @pytest.mark.parametrize('selection', [
+        None, TJCS_DEFAULT, np.int64(TJCS_DEFAULT),
+    ], ids=['none', 'default', 'numpy_default'])
     @pytest.mark.parametrize('pixel_format,subsample,colorspace,channels', [
         (TJPF_BGR, TJSAMP_422, TJCS_YCbCr, 3),
         (TJPF_RGB, TJSAMP_444, TJCS_YCbCr, 3),
@@ -3102,26 +3105,30 @@ class TestJPEGColorspace:
         (TJPF_GRAY, TJSAMP_GRAY, TJCS_GRAY, 1),
         (TJPF_CMYK, TJSAMP_444, TJCS_YCCK, 4),
     ])
-    def test_none_preserves_automatic_selection(
+    def test_default_preserves_automatic_selection(
             self, jpeg_instance, codec, pixel_format, subsample, colorspace,
-            channels):
+            channels, selection):
         bits, encode, _ = codec
         source = self.image(bits, channels)
         kwargs = dict(pixel_format=pixel_format, jpeg_subsample=subsample)
         before = encode(source, **kwargs)
         encode(self.image(bits), jpeg_colorspace=TJCS_RGB,
                jpeg_subsample=TJSAMP_444)
-        after = encode(source, jpeg_colorspace=None, **kwargs)
+        after = encode(source, jpeg_colorspace=selection, **kwargs)
         assert before == after
         assert jpeg_instance.decode_header(after)[3] == colorspace
 
+    @pytest.mark.parametrize('selection', [
+        None, TJCS_DEFAULT, np.int64(TJCS_DEFAULT),
+    ], ids=['none', 'default', 'numpy_default'])
     @pytest.mark.parametrize('bits', [8, 12, 16])
     @pytest.mark.parametrize('pixel_format,colorspace,channels', [
         (TJPF_RGB, TJCS_RGB, 3), (TJPF_BGR, TJCS_RGB, 3),
         (TJPF_GRAY, TJCS_GRAY, 1), (TJPF_CMYK, TJCS_CMYK, 4),
     ])
     def test_lossless_native_colorspace_roundtrip(
-            self, jpeg_instance, bits, pixel_format, colorspace, channels):
+            self, jpeg_instance, bits, pixel_format, colorspace, channels,
+            selection):
         encode = getattr(jpeg_instance, 'encode' if bits == 8 else
                          'encode_{}bit'.format(bits))
         decode = getattr(jpeg_instance, 'decode' if bits == 8 else
@@ -3132,7 +3139,8 @@ class TestJPEGColorspace:
             lossless=True, quality=-1, jpeg_subsample=-1)
         data = encode(source, pixel_format=pixel_format,
                       jpeg_colorspace=colorspace, **kwargs)
-        assert data == encode(source, pixel_format=pixel_format, **kwargs)
+        assert data == encode(source, pixel_format=pixel_format,
+                              jpeg_colorspace=selection, **kwargs)
         assert jpeg_instance.decode_header(data, return_precision=True) == (
             35, 27, TJSAMP_GRAY if channels == 1 else TJSAMP_444,
             colorspace, bits)
@@ -3155,9 +3163,9 @@ class TestJPEGColorspace:
 
     @pytest.mark.parametrize('bits', [8, 12, 16])
     @pytest.mark.parametrize('value,error', [
-        (-1, ValueError), (5, ValueError), (2 ** 40, ValueError),
+        (-2, ValueError), (5, ValueError), (2 ** 40, ValueError),
         (True, TypeError), (False, TypeError), (np.bool_(False), TypeError),
-        (0.0, TypeError), ('RGB', TypeError), ([0], TypeError),
+        (0.0, TypeError), (-1.0, TypeError), ('RGB', TypeError), ([0], TypeError),
     ])
     def test_invalid_colorspace_is_rejected_before_native_init(
             self, jpeg_instance, monkeypatch, bits, value, error):
@@ -3175,6 +3183,36 @@ class TestJPEGColorspace:
         data = encode(self.image(bits), jpeg_colorspace=np.int64(TJCS_RGB),
                       jpeg_subsample=np.int64(TJSAMP_444))
         assert jpeg_instance.decode_header(data)[2:] == (TJSAMP_444, TJCS_RGB)
+
+    @pytest.mark.parametrize('bits', [8, 12, 16])
+    def test_default_colorspace_does_not_call_native_setter(
+            self, jpeg_instance, monkeypatch, bits):
+        """Automatic mode must work with native APIs that reject -1."""
+        encode = getattr(jpeg_instance, 'encode' if bits == 8 else
+                         'encode_{}bit'.format(bits))
+        source = self.image(bits)
+        expected = encode(source)
+        native_set = jpeg_instance._TurboJPEG__set
+
+        def reject_colorspace_set(handle, parameter, value):
+            if parameter == TJPARAM_COLORSPACE:
+                pytest.fail('Automatic mode must leave native defaults intact')
+            return native_set(handle, parameter, value)
+
+        monkeypatch.setattr(
+            jpeg_instance, '_TurboJPEG__set', reject_colorspace_set)
+        assert encode(source, jpeg_colorspace=TJCS_DEFAULT) == expected
+
+    @pytest.mark.parametrize('lossless', [False, True])
+    def test_default_colorspace_in_place_encode(self, jpeg_instance, lossless):
+        source = self.image(8)
+        subsample = TJSAMP_444 if lossless else TJSAMP_422
+        dst = bytearray(jpeg_instance.buffer_size(source, subsample))
+        expected = jpeg_instance.encode(source, lossless=lossless)
+        result, written = jpeg_instance.encode(
+            source, dst=dst, lossless=lossless, jpeg_colorspace=TJCS_DEFAULT)
+        assert result is dst
+        assert bytes(dst[:written]) == expected
 
     @pytest.mark.parametrize('pixel_format,colorspace,channels', [
         (TJPF_RGB, TJCS_CMYK, 3), (TJPF_RGB, TJCS_YCCK, 3),
@@ -3268,13 +3306,15 @@ class TestJPEGColorspace:
 
         def failing_set(handle, parameter, value):
             if parameter == TJPARAM_COLORSPACE:
-                return native_set(handle, parameter, -1)
+                # -1 is the valid TJCS_DEFAULT value in libjpeg-turbo 3.2+.
+                # Use a value below it to exercise the native error path.
+                return native_set(handle, parameter, -2)
             return native_set(handle, parameter, value)
 
         monkeypatch.setattr(jpeg_instance, '_TurboJPEG__set', failing_set)
         with patch.object(jpeg_instance, '_TurboJPEG__destroy',
                           wraps=jpeg_instance._TurboJPEG__destroy) as destroy:
-            with pytest.raises(OSError):
+            with pytest.raises(OSError, match='Parameter value out of range'):
                 encode(self.image(bits), jpeg_colorspace=TJCS_RGB,
                        jpeg_subsample=TJSAMP_444)
             destroy.assert_called_once()

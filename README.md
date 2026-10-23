@@ -199,6 +199,20 @@ with open('output_gray.jpg', 'wb') as f:
 Its default, `None`, preserves automatic selection: ordinary RGB/BGR inputs
 are encoded as YCbCr in lossy mode, even with `TJSAMP_444`.
 
+`TJCS_DEFAULT` (`-1`) is an explicit alternative to `None` in `encode()`,
+`encode_12bit()`, and `encode_16bit()`:
+
+```python
+from turbojpeg import TJCS_DEFAULT
+
+encoded = jpeg.encode(bgr_array, jpeg_colorspace=TJCS_DEFAULT)
+```
+
+Although the native setter accepts `TJCS_DEFAULT` only in libjpeg-turbo 3.2
+or later, PyTurboJPEG supports this option with every supported version
+(3.0+). Each encoding call creates a new native handle, so automatic selection
+is preserved by leaving its colorspace setting untouched.
+
 To compress three independent channels (for example, distinct stain signals)
 without an RGB-to-YCbCr conversion, explicitly select RGB storage and 4:4:4:
 
@@ -239,7 +253,8 @@ When reusing an output buffer, size it with
 `jpeg.buffer_size(image, jpeg_subsample=TJSAMP_444)` for RGB storage.
 
 Lossless encoding already preserves the input colorspace without conversion.
-With `lossless=True`, or when using `encode_16bit()`, an explicit
+With `lossless=True`, or when using `encode_16bit()`, `None` and `TJCS_DEFAULT`
+select the input's native colorspace automatically. Any other explicit
 `jpeg_colorspace` must match the input: `TJCS_RGB` for RGB/BGR variants,
 `TJCS_GRAY` for grayscale, or `TJCS_CMYK` for CMYK. Other selections raise
 `ValueError`; quality and subsampling remain ignored in lossless mode.

@@ -89,6 +89,7 @@ TJCS_YCbCr = 1
 TJCS_GRAY = 2
 TJCS_CMYK = 3
 TJCS_YCCK = 4
+TJCS_DEFAULT = -1
 
 # pixel formats
 # see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
@@ -1028,7 +1029,9 @@ class TurboJPEG(object):
             Requires TurboJPEG 3.1 or later with tj3SetICCProfile support.
         jpeg_colorspace : int or None
             JPEG storage colorspace (TJCS_*), independent of the input
-            pixel_format. None preserves the library's automatic selection.
+            pixel_format. None and TJCS_DEFAULT preserve the library's
+            automatic selection, including with libjpeg-turbo versions
+            older than 3.2.
             For lossy encoding, RGB/CMYK require TJSAMP_444, GRAY requires
             TJSAMP_GRAY, and YCbCr/YCCK require non-grayscale subsampling.
             RGB inputs support RGB, YCbCr, or GRAY output; grayscale inputs
@@ -1314,8 +1317,9 @@ class TurboJPEG(object):
             When True, provides perfect reconstruction with larger file sizes
         jpeg_colorspace : int or None
             JPEG storage colorspace (TJCS_*). Uses the same input format,
-            subsampling, and lossless rules as encode(). None preserves the
-            library's automatic selection.
+            subsampling, and lossless rules as encode(). None and
+            TJCS_DEFAULT preserve the library's automatic selection on all
+            supported libjpeg-turbo versions.
             
         Returns
         -------
@@ -1391,7 +1395,8 @@ class TurboJPEG(object):
         jpeg_colorspace : int or None
             JPEG storage colorspace (TJCS_*). Only the input's native
             colorspace (RGB, GRAY, or CMYK) is supported because 16-bit JPEG
-            is always lossless. None preserves automatic selection.
+            is always lossless. None and TJCS_DEFAULT preserve automatic
+            selection on all supported libjpeg-turbo versions.
             
         Returns
         -------
@@ -2387,8 +2392,14 @@ class TurboJPEG(object):
     @classmethod
     def __validate_encoding_colorspace(
             cls, jpeg_colorspace, pixel_format, jpeg_subsample, lossless):
+        """Validate the selection and normalize automatic mode to None."""
         jpeg_colorspace = cls.__validate_bounded_integer(
-            'jpeg_colorspace', jpeg_colorspace, TJCS_RGB, TJCS_YCCK)
+            'jpeg_colorspace', jpeg_colorspace, TJCS_DEFAULT, TJCS_YCCK)
+        if jpeg_colorspace == TJCS_DEFAULT:
+            # Each encode call creates a fresh native handle, already in
+            # automatic mode. Skipping the setter also supports versions
+            # older than 3.2, which reject an explicit TJCS_DEFAULT value.
+            return None
         if pixel_format == TJPF_GRAY:
             native_colorspace = TJCS_GRAY
             supported = (TJCS_GRAY,)
