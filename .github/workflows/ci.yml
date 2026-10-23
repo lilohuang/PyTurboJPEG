@@ -8,7 +8,7 @@ on:
 
 jobs:
   linux-test:
-    name: Test (Py ${{ matrix.python-version }}, turbo ${{ matrix.libjpeg-version }})
+    name: Test (Py ${{ matrix.python-version }}, turbo ${{ matrix.libjpeg-version }}, NumPy ${{ matrix.numpy-version }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -18,6 +18,18 @@ jobs:
       matrix:
         python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
         libjpeg-version: ['3.0.0', '3.1.0', '3.1.3', '3.2.0']
+        numpy-version: ['latest']
+        include:
+          - python-version: '3.13'
+            libjpeg-version: '3.2.0'
+            numpy-version: 'latest'
+            coverage: true
+          - python-version: '3.12'
+            libjpeg-version: '3.2.0'
+            numpy-version: '1.26.4'
+          - python-version: '3.12'
+            libjpeg-version: '3.2.0'
+            numpy-version: '2.*'
     
     steps:
     - name: Checkout repository
@@ -48,24 +60,60 @@ jobs:
         sudo ldconfig
     
     - name: Install Python dependencies
+      env:
+        NUMPY_VERSION: ${{ matrix.numpy-version }}
       run: |
         python -m pip install --upgrade pip
-        python -m pip install -e '.[test]'
+        if [ "$NUMPY_VERSION" = latest ]; then
+          python -m pip install -e '.[test]'
+        else
+          python -m pip install -e '.[test]' "numpy==$NUMPY_VERSION"
+        fi
+        python -c "import numpy; print('NumPy', numpy.__version__)"
     
     - name: Run test suite
+      if: ${{ !matrix.coverage }}
       run: |
         pytest tests/ -v
 
+    - name: Run test suite with branch coverage
+      if: matrix.coverage
+      run: |
+        pytest tests/ -v --cov=turbojpeg --cov-branch \
+          --cov-report=term-missing --cov-report=xml:coverage.xml \
+          --cov-report=html:htmlcov
+
+    - name: Upload coverage report
+      if: ${{ !cancelled() && matrix.coverage }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage
+        path: |
+          coverage.xml
+          htmlcov/
+        retention-days: 14
+
   cross-platform-test:
-    name: Test (${{ matrix.os }}, Py ${{ matrix.python-version }})
+    name: Test (${{ matrix.os }}, Py ${{ matrix.python-version }}, turbo ${{ matrix.libjpeg-version }})
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
-        python-version: ['3.13']
+        include:
+          - os: macos-latest
+            python-version: '3.13'
+            libjpeg-version: 'homebrew'
+          - os: macos-latest
+            python-version: '3.14'
+            libjpeg-version: 'homebrew'
+          - os: windows-latest
+            python-version: '3.13'
+            libjpeg-version: '3.1.3'
+          - os: windows-latest
+            python-version: '3.14'
+            libjpeg-version: '3.2.0'
 
     steps:
     - name: Checkout repository
@@ -87,7 +135,7 @@ jobs:
       shell: pwsh
       run: |
         Invoke-WebRequest `
-          https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-3.1.3-vc-x64.exe `
+          https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${{ matrix.libjpeg-version }}/libjpeg-turbo-${{ matrix.libjpeg-version }}-vc-x64.exe `
           -OutFile "$env:RUNNER_TEMP\libjpeg-turbo.exe"
         Start-Process `
           -FilePath "$env:RUNNER_TEMP\libjpeg-turbo.exe" `
@@ -121,6 +169,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      TURBOJPEG_LIB_PATH: /opt/libjpeg-turbo/lib64/libturbojpeg.so
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-python@v5
@@ -131,7 +181,42 @@ jobs:
         python -m pip install --upgrade build twine
         python -m build
         python -m twine check dist/*
-    - name: Install wheel and import module
+    - name: Install libjpeg-turbo for wheel test
       run: |
-        python -m pip install --force-reinstall dist/*.whl
-        python -c "import turbojpeg; print(turbojpeg.__version__)"
+        wget -q https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-official_3.2.0_amd64.deb \
+          -O "$RUNNER_TEMP/libjpeg-turbo.deb"
+        sudo dpkg -i "$RUNNER_TEMP/libjpeg-turbo.deb"
+    - name: Install wheel in a clean environment
+      run: |
+        python -m venv "$RUNNER_TEMP/wheel-test"
+        "$RUNNER_TEMP/wheel-test/bin/python" -m pip install dist/*.whl
+    - name: Test installed wheel
+      working-directory: ${{ runner.temp }}
+      run: |
+        "$RUNNER_TEMP/wheel-test/bin/python" -I - <<'PY'
+        import os
+        import sys
+        from importlib.metadata import version
+        from pathlib import Path
+
+        import numpy as np
+        import turbojpeg
+        from turbojpeg import TurboJPEG, TJCS_DEFAULT, TJCS_RGB, TJPF_RGB, TJSAMP_444
+
+        module_path = Path(turbojpeg.__file__).resolve()
+        assert module_path.is_relative_to(Path(sys.prefix).resolve()), module_path
+        assert turbojpeg.__version__ == version('PyTurboJPEG')
+
+        jpeg = TurboJPEG(os.environ['TURBOJPEG_LIB_PATH'])
+        image = np.arange(17 * 19 * 3, dtype=np.uint8).reshape(17, 19, 3)
+        encoded = jpeg.encode(image, pixel_format=TJPF_RGB,
+                              jpeg_subsample=TJSAMP_444, jpeg_colorspace=TJCS_RGB)
+        assert jpeg.decode_header(encoded) == (19, 17, TJSAMP_444, TJCS_RGB)
+        decoded = jpeg.decode(encoded, pixel_format=TJPF_RGB)
+        assert decoded.shape == image.shape and decoded.dtype == image.dtype
+
+        lossless = jpeg.encode(image, pixel_format=TJPF_RGB, lossless=True,
+                               jpeg_colorspace=TJCS_DEFAULT)
+        np.testing.assert_array_equal(jpeg.decode(lossless, pixel_format=TJPF_RGB), image)
+        print(f'Installed PyTurboJPEG {turbojpeg.__version__}: {module_path}')
+        PY
