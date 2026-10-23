@@ -22,6 +22,9 @@ The test suite covers all core functions of PyTurboJPEG plus regression tests fo
 - **decode_to_yuv()** - Tests YUV decoding with different parameters
 - **decode_to_yuv_planes()** - Tests YUV plane decoding
 - **encode()** - Tests JPEG encoding with various quality levels, pixel formats, and subsample modes
+- **JPEG storage colorspace** - Tests explicit RGB, YCbCr, grayscale, CMYK,
+  and YCCK output; independent channel compression; input layout; lossless
+  semantics; invalid combinations; and destination buffer bounds
 - **encode_from_yuv()** - Tests encoding from YUV data
 - **scale_with_quality()** - Tests scaling and quality adjustment
 - **crop()** - Tests lossless crop operations

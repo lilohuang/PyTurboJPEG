@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '2.5.0'
+__version__ = '2.6.0'
 
 from ctypes import (
     CFUNCTYPE,
@@ -999,7 +999,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None, lossless=False, icc_profile=None):
+    def encode(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, dst=None, lossless=False, icc_profile=None, jpeg_colorspace=None):
         """encodes numpy array to JPEG memory buffer.
         
         Parameters
@@ -1026,6 +1026,15 @@ class TurboJPEG(object):
         icc_profile : bytes or None
             Raw ICC profile data to embed in the JPEG (optional).
             Requires TurboJPEG 3.1 or later with tj3SetICCProfile support.
+        jpeg_colorspace : int or None
+            JPEG storage colorspace (TJCS_*), independent of the input
+            pixel_format. None preserves the library's automatic selection.
+            For lossy encoding, RGB/CMYK require TJSAMP_444, GRAY requires
+            TJSAMP_GRAY, and YCbCr/YCCK require non-grayscale subsampling.
+            RGB inputs support RGB, YCbCr, or GRAY output; grayscale inputs
+            support only GRAY; CMYK inputs support CMYK or YCCK.
+            Lossless encoding accepts only the input's native colorspace
+            (RGB, GRAY, or CMYK) and still ignores jpeg_subsample.
             
         Returns
         -------
@@ -1071,6 +1080,10 @@ class TurboJPEG(object):
             img_array, height, width, pixel_format = self.__prepare_image(
                 img_array, np.uint8, pixel_format, 'encode()')
 
+        if jpeg_colorspace is not None:
+            jpeg_colorspace = self.__validate_encoding_colorspace(
+                jpeg_colorspace, pixel_format, jpeg_subsample, lossless)
+
         handle = self.__init(TJINIT_COMPRESS)
         try:
             if flags:
@@ -1083,6 +1096,10 @@ class TurboJPEG(object):
                 self.__set_parameter(
                     handle, TJPARAM_SUBSAMP, jpeg_subsample)
                 self.__set_parameter(handle, TJPARAM_QUALITY, quality)
+
+                if jpeg_colorspace is not None:
+                    self.__set_parameter(
+                        handle, TJPARAM_COLORSPACE, jpeg_colorspace)
 
             icc_size = 0
             if icc_profile is not None:
@@ -1277,7 +1294,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(compress_handle)
     
-    def encode_12bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, lossless=False):
+    def encode_12bit(self, img_array, quality=85, pixel_format=TJPF_BGR, jpeg_subsample=TJSAMP_422, flags=0, lossless=False, jpeg_colorspace=None):
         """Encodes 12-bit numpy array (uint16) to JPEG memory buffer.
         
         Parameters
@@ -1295,6 +1312,10 @@ class TurboJPEG(object):
         lossless : bool
             Enable lossless JPEG compression (default: False)
             When True, provides perfect reconstruction with larger file sizes
+        jpeg_colorspace : int or None
+            JPEG storage colorspace (TJCS_*). Uses the same input format,
+            subsampling, and lossless rules as encode(). None preserves the
+            library's automatic selection.
             
         Returns
         -------
@@ -1313,6 +1334,9 @@ class TurboJPEG(object):
         img_array, height, width, pixel_format = self.__prepare_image(
             img_array, np.uint16, pixel_format, 'encode_12bit()',
             maximum_value=4095)
+        if jpeg_colorspace is not None:
+            jpeg_colorspace = self.__validate_encoding_colorspace(
+                jpeg_colorspace, pixel_format, jpeg_subsample, lossless)
 
         handle = self.__init(TJINIT_COMPRESS)
         try:
@@ -1326,6 +1350,10 @@ class TurboJPEG(object):
                 self.__set_parameter(
                     handle, TJPARAM_SUBSAMP, jpeg_subsample)
                 self.__set_parameter(handle, TJPARAM_QUALITY, quality)
+
+                if jpeg_colorspace is not None:
+                    self.__set_parameter(
+                        handle, TJPARAM_COLORSPACE, jpeg_colorspace)
             
             jpeg_buf = c_void_p()
             jpeg_size = c_size_t()
@@ -1346,7 +1374,7 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
     
-    def encode_16bit(self, img_array, pixel_format=TJPF_BGR, flags=0):
+    def encode_16bit(self, img_array, pixel_format=TJPF_BGR, flags=0, jpeg_colorspace=None):
         """Encodes 16-bit numpy array (uint16) to lossless JPEG memory buffer.
         
         **Note:** 16-bit precision requires lossless JPEG compression per the JPEG standard.
@@ -1360,6 +1388,10 @@ class TurboJPEG(object):
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         flags : int
             Compression flags
+        jpeg_colorspace : int or None
+            JPEG storage colorspace (TJCS_*). Only the input's native
+            colorspace (RGB, GRAY, or CMYK) is supported because 16-bit JPEG
+            is always lossless. None preserves automatic selection.
             
         Returns
         -------
@@ -1374,6 +1406,9 @@ class TurboJPEG(object):
                 'JPEG')
         img_array, height, width, pixel_format = self.__prepare_image(
             img_array, np.uint16, pixel_format, 'encode_16bit()')
+        if jpeg_colorspace is not None:
+            self.__validate_encoding_colorspace(
+                jpeg_colorspace, pixel_format, TJSAMP_444, lossless=True)
 
         handle = self.__init(TJINIT_COMPRESS)
         try:
@@ -2348,6 +2383,46 @@ class TurboJPEG(object):
         if type(quality) is int and 1 <= quality <= 100:
             return quality
         return cls.__validate_bounded_integer('quality', quality, 1, 100)
+
+    @classmethod
+    def __validate_encoding_colorspace(
+            cls, jpeg_colorspace, pixel_format, jpeg_subsample, lossless):
+        jpeg_colorspace = cls.__validate_bounded_integer(
+            'jpeg_colorspace', jpeg_colorspace, TJCS_RGB, TJCS_YCCK)
+        if pixel_format == TJPF_GRAY:
+            native_colorspace = TJCS_GRAY
+            supported = (TJCS_GRAY,)
+        elif pixel_format == TJPF_CMYK:
+            native_colorspace = TJCS_CMYK
+            supported = (TJCS_CMYK, TJCS_YCCK)
+        else:
+            native_colorspace = TJCS_RGB
+            supported = (TJCS_RGB, TJCS_YCbCr, TJCS_GRAY)
+
+        # TJPARAM_COLORSPACE only controls lossy compression. In lossless
+        # mode, the native codec preserves the input colorspace regardless
+        # of that parameter, so reject requests it would silently ignore.
+        if lossless:
+            if jpeg_colorspace != native_colorspace:
+                raise ValueError(
+                    'Lossless JPEG requires jpeg_colorspace={} for '
+                    'pixel_format={}'.format(native_colorspace, pixel_format))
+        elif jpeg_colorspace not in supported:
+            raise ValueError(
+                'jpeg_colorspace={} is incompatible with pixel_format={}'
+                .format(jpeg_colorspace, pixel_format))
+        elif jpeg_colorspace in (TJCS_RGB, TJCS_CMYK):
+            if jpeg_subsample != TJSAMP_444:
+                raise ValueError(
+                    'RGB and CMYK JPEG require jpeg_subsample=TJSAMP_444')
+        elif jpeg_colorspace == TJCS_GRAY:
+            if jpeg_subsample != TJSAMP_GRAY:
+                raise ValueError(
+                    'Grayscale JPEG requires jpeg_subsample=TJSAMP_GRAY')
+        elif jpeg_subsample == TJSAMP_GRAY:
+            raise ValueError(
+                'YCbCr and YCCK JPEG require non-grayscale jpeg_subsample')
+        return jpeg_colorspace
 
     @classmethod
     def __prepare_image(

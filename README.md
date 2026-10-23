@@ -192,6 +192,62 @@ with open('output_gray.jpg', 'wb') as f:
     f.write(jpeg.encode(bgr_array, lossless=True))
 ```
 
+### JPEG Storage Colorspace
+
+`pixel_format` describes the input array's channel order. The optional
+`jpeg_colorspace` argument selects the colorspace stored in the JPEG.
+Its default, `None`, preserves automatic selection: ordinary RGB/BGR inputs
+are encoded as YCbCr in lossy mode, even with `TJSAMP_444`.
+
+To compress three independent channels (for example, distinct stain signals)
+without an RGB-to-YCbCr conversion, explicitly select RGB storage and 4:4:4:
+
+```python
+from turbojpeg import TJPF_RGB, TJCS_RGB, TJSAMP_444
+
+encoded = jpeg.encode(
+    three_channel_array,  # uint8, shape (height, width, 3)
+    pixel_format=TJPF_RGB,
+    jpeg_colorspace=TJCS_RGB,
+    jpeg_subsample=TJSAMP_444,
+    quality=90,
+)
+decoded = jpeg.decode(encoded, pixel_format=TJPF_RGB)
+assert jpeg.decode_header(encoded)[3] == TJCS_RGB
+```
+
+This avoids mixing the channels during color conversion; lossy JPEG still
+introduces DCT/quantization error within each channel. The same arguments work
+with `encode_12bit()` for `uint16` input containing values from 0 to 4095.
+This feature requires libjpeg-turbo 3.0 or later, the project's existing minimum.
+
+Explicit colorspace selection uses these rules for lossy encoding:
+
+| `jpeg_colorspace` | Supported input pixel formats | Required `jpeg_subsample` |
+| --- | --- | --- |
+| `TJCS_RGB` | RGB/BGR and their four-channel variants | `TJSAMP_444` |
+| `TJCS_YCbCr` | RGB/BGR and their four-channel variants | Any except `TJSAMP_GRAY` |
+| `TJCS_GRAY` | RGB/BGR variants or `TJPF_GRAY` | `TJSAMP_GRAY` |
+| `TJCS_CMYK` | `TJPF_CMYK` | `TJSAMP_444` |
+| `TJCS_YCCK` | `TJPF_CMYK` | Any except `TJSAMP_GRAY` |
+
+Conflicting settings raise `ValueError`. In particular, specifying
+`jpeg_colorspace=TJCS_RGB` also requires explicitly selecting `TJSAMP_444`,
+since the default subsampling is 4:2:2. Four-channel RGB formats retain their
+existing behavior: the alpha/unused channel is not stored in the JPEG.
+When reusing an output buffer, size it with
+`jpeg.buffer_size(image, jpeg_subsample=TJSAMP_444)` for RGB storage.
+
+Lossless encoding already preserves the input colorspace without conversion.
+With `lossless=True`, or when using `encode_16bit()`, an explicit
+`jpeg_colorspace` must match the input: `TJCS_RGB` for RGB/BGR variants,
+`TJCS_GRAY` for grayscale, or `TJCS_CMYK` for CMYK. Other selections raise
+`ValueError`; quality and subsampling remain ignored in lossless mode.
+
+RGB JPEGs use the packed-pixel `encode()`/`decode()` APIs. The native codec
+does not support encoding them from, or decoding them to, planar YUV;
+`encode_from_yuv()` does not accept `jpeg_colorspace`.
+
 ### Advanced Operations
 
 ```python
