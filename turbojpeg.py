@@ -1574,24 +1574,30 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def crop_multiple(self, jpeg_buf, crop_parameters, background_luminance=1.0, gray=False, copynone=False):
-        """Lossless crop and/or extension operations on jpeg image.
-        Crop origins must be aligned to the JPEG iMCU size and inside the
-        source image. Extension requires a complete source iMCU on the
-        extended axis; otherwise ValueError is raised on every library
-        version to prevent loss of source pixels.
+    def crop_multiple(self, jpeg_buf, crop_parameters, background_luminance=1.0,
+                      gray=False, copynone=False, *, align='strict'):
+        """Losslessly crop and/or extend a JPEG in one batch.
+        Crop origins must be inside the source image. With align='strict',
+        origins must also be aligned to the JPEG iMCU grid. For pure crops,
+        'expand' and 'shrink' match crop(preserve=False/True), respectively.
 
         Background extension supports grayscale, YCbCr, and RGB JPEGs.
         CMYK/YCCK images can be cropped without extension.
-        On an extended axis, x/y place the source in the larger output canvas.
+        On an extended axis, x/y place the source in the output canvas;
+        the entire source must fit along that axis. Operations extending
+        either axis always require aligned x/y, regardless of align.
+        Extension also requires a complete source iMCU on the extended axis
+        (8x8 blocks for grayscale output), so no source pixels are discarded.
 
         Parameters
         ----------
         jpeg_buf: bytes
             Input jpeg image.
-        crop_parameters: List[Tuple[int, int, int, int]]
-            List of crop parameters defining start x and y origin and width
-            and height of each crop operation.
+        crop_parameters: iterable of (x, y, w, h)
+            Non-negative integer coordinates and output dimensions, in order.
+            w=0 or h=0 keeps the remaining source extent from x or y.
+            A dimension larger than the source requests extension on that
+            axis; x/y then specify placement rather than a crop origin.
         background_luminance: float
             Luminance level (0 -1 ) to fill background when extending image.
             Default to 1, resulting in white background.
@@ -1599,12 +1605,27 @@ class TurboJPEG(object):
             Produce greyscale output
         copynone: bool
             True = do not copy EXIF data (False by default)
+        align: {'strict', 'expand', 'shrink'}
+            Pure-crop alignment policy; default 'strict' rejects unaligned
+            origins and out-of-bounds rectangles. 'expand' rounds origins down;
+            'shrink' rounds them up. Both keep the requested right/bottom edges,
+            clipped to the source. Empty results raise ValueError.
+
+        Region validation errors identify the zero-based crop_parameters
+        index, parameter, source dimensions, and iMCU alignment requirements.
+        Geometry errors suggest explicit remedies and their tradeoffs; no
+        source trimming, placement changes, or recompression is automatic.
+        All regions are validated before the native batch transform runs.
 
         Returns
         ----------
         List[bytes]
             Cropped and/or extended jpeg images.
         """
+        if not isinstance(align, str):
+            raise TypeError("'align' argument must be a string: 'strict', 'expand', or 'shrink'")
+        if align not in ('strict', 'expand', 'shrink'):
+            raise ValueError("'align' argument must be 'strict', 'expand', or 'shrink'")
         handle = self.__init(TJINIT_TRANSFORM)
         try:
             if self.__source_limits_enabled:
@@ -1643,11 +1664,11 @@ class TurboJPEG(object):
                 raise ValueError(
                     "'background_luminance' argument must be between 0 and 1")
 
-            # Define cropping regions from input parameters and image size
-            crop_regions = self.__define_cropping_regions(crop_parameters)
+            # Resolve and validate every region before building native transforms.
+            crop_regions = self.__prepare_cropping_regions(
+                crop_parameters, (image_width, image_height),
+                jpeg_subsample, jpeg_colorspace, gray, align)
             number_of_operations = len(crop_regions)
-            if number_of_operations == 0:
-                raise ValueError("'crop_parameters' argument must not be empty")
 
             # Define crop transforms from cropping_regions
             crop_transforms = (TransformStruct * number_of_operations)()
@@ -1655,33 +1676,9 @@ class TurboJPEG(object):
             background_coefficients = None
             callback_data_refs = []
             callback_refs = []
-            grayscale_output = jpeg_colorspace == TJCS_GRAY or (
-                gray and jpeg_colorspace == TJCS_YCbCr)
-            mcu_width = MCU_WIDTH if grayscale_output else tjMCUWidth[jpeg_subsample]
-            mcu_height = MCU_HEIGHT if grayscale_output else tjMCUHeight[jpeg_subsample]
             for i, crop_region in enumerate(crop_regions):
-                if crop_region.x >= image_width or \
-                        crop_region.y >= image_height:
-                    raise ValueError(
-                        'Crop origin must be inside the source image')
-                if crop_region.x % tjMCUWidth[jpeg_subsample] or \
-                        crop_region.y % tjMCUHeight[jpeg_subsample]:
-                    raise ValueError(
-                        'Crop origin must be aligned to the JPEG iMCU size')
                 extends_width = crop_region.w > image_width
                 extends_height = crop_region.h > image_height
-                # Before 3.2, native crop extension ignores TJXOPT_PERFECT
-                # and discards a partial source iMCU on the extended axis.
-                if (extends_width and image_width % mcu_width) or \
-                        (extends_height and image_height % mcu_height):
-                    raise ValueError(
-                        'Cannot extend an image with a partial iMCU on the '
-                        'extended axis')
-                if (extends_width or extends_height) and jpeg_colorspace not in (
-                        TJCS_GRAY, TJCS_YCbCr, TJCS_RGB):
-                    raise ValueError(
-                        'Background extension supports only grayscale, '
-                        'YCbCr, and RGB JPEG images')
                 # The fill_background callback is slow, only use it if needed
                 if self.__need_fill_background(
                     crop_region,
@@ -2044,47 +2041,163 @@ class TurboJPEG(object):
                 'Crop region contains no pixels after iMCU alignment')
         return a, b
 
-    @classmethod
-    def __define_cropping_regions(cls, crop_parameters):
-        """Return list of crop regions from crop parameters
-
-        Parameters
-        ----------
-        crop_parameters: List[Tuple[int, int, int, int]]
-            List of crop parameters defining start x and y origin and width
-            and height of each crop operation.
-
-        Returns
-        ----------
-        List[CroppingRegion]
-            List of crop operations, size is equal to the product of number of
-            crop operations to perform in x and y direction.
-        """
+    def __prepare_cropping_regions(self, crop_parameters, image_size,
+                                   jpeg_subsample, jpeg_colorspace, gray, align):
+        """Normalize crops and validate placement without changing crop()."""
+        image_width, image_height = image_size
+        mcu_width, mcu_height = tjMCUWidth[jpeg_subsample], tjMCUHeight[jpeg_subsample]
+        sampling = ('4:4:4', '4:2:2', '4:2:0', 'grayscale',
+                    '4:4:0', '4:1:1', '4:4:1')[jpeg_subsample]
+        source_info = 'source={}x{}, subsampling={}, iMCU={}x{}'.format(
+            image_width, image_height, sampling, mcu_width, mcu_height)
+        grayscale_output = jpeg_colorspace == TJCS_GRAY or (
+            gray and jpeg_colorspace == TJCS_YCbCr)
+        extension_mcu = (MCU_WIDTH, MCU_HEIGHT) if grayscale_output else (mcu_width, mcu_height)
+        if grayscale_output and extension_mcu != (mcu_width, mcu_height):
+            source_info += ', grayscale output iMCU=8x8'
         try:
             crop_parameters = list(crop_parameters)
         except TypeError as exc:
             raise TypeError(
-                "'crop_parameters' argument must be an iterable") from exc
+                "'crop_parameters' argument must be an iterable; " + source_info) from exc
+        if not crop_parameters:
+            raise ValueError("'crop_parameters' argument must not be empty; " + source_info)
         regions = []
         for index, crop in enumerate(crop_parameters):
             try:
-                if len(crop) != 4:
-                    raise ValueError
-                x, y, w, h = crop
+                try:
+                    if len(crop) != 4:
+                        raise ValueError
+                    x, y, w, h = crop
+                except (TypeError, ValueError):
+                    raise ValueError('expected a region containing (x, y, w, h)') from None
+                values = []
+                for name, value in zip(('x', 'y', 'w', 'h'), (x, y, w, h)):
+                    try:
+                        values.append(self.__validate_resource_limit(name, value))
+                    except (TypeError, ValueError) as exc:
+                        raise type(exc)('{}={!r}: {}'.format(name, value, exc)) from None
+                x, y, w, h = values
+                extending = w > image_width or h > image_height
+                auto_align = align != 'strict' and not extending
+                normalized = []
+                axes = (
+                    ('x', 'w', 'width', x, w, image_width, mcu_width, extension_mcu[0]),
+                    ('y', 'h', 'height', y, h, image_height, mcu_height, extension_mcu[1]),
+                )
+                for origin_name, size_name, dimension, origin, size, boundary, mcu, ext_mcu in axes:
+                    extends = size > boundary
+                    if extends:
+                        if origin + boundary > size:
+                            last_aligned = ((size - boundary) // mcu) * mcu
+                            remedy = 'use {}={} (moves the source within the canvas)'.format(
+                                origin_name, last_aligned)
+                            if origin % mcu == 0:
+                                remedy += ', or increase {} to at least {} (larger output canvas)'.format(
+                                    size_name, origin + boundary)
+                            else:
+                                remedy += ('; for a larger canvas, choose an aligned {} first and '
+                                           'set {} >= {} + {}').format(
+                                               origin_name, size_name, origin_name, boundary)
+                            raise ValueError(
+                                '{}={} cannot place the full source {}={} in output {}={}; '
+                                '{} must be at most {}; {}'.format(
+                                    origin_name, origin, dimension, boundary, size_name,
+                                    size, origin_name, size - boundary, remedy))
+                    elif origin >= boundary:
+                        last_aligned = ((boundary - 1) // mcu) * mcu
+                        raise ValueError(
+                            '{}={} must be inside the source {} (0 <= {} < {}); '
+                            'for example, use {}={}, {}=0 for the remaining extent '
+                            '(selects a different source region)'.format(
+                                origin_name, origin, dimension, origin_name, boundary,
+                                origin_name, last_aligned, size_name))
+                    if auto_align:
+                        try:
+                            adjusted = self.__axis_to_image_boundaries(
+                                origin, size or boundary - origin, boundary,
+                                align == 'shrink', mcu)
+                        except ValueError as exc:
+                            next_aligned = ((origin + mcu - 1) // mcu) * mcu
+                            if next_aligned < boundary:
+                                remedy = ('increase {} to at least {} to include pixels starting '
+                                          'at {}={} (selects a larger requested area)').format(
+                                              size_name, next_aligned - origin + 1,
+                                              origin_name, next_aligned)
+                            else:
+                                remedy = ('no aligned {} exists inside the source at or after {}; '
+                                          'use {}={}, {}=0 to include earlier source pixels').format(
+                                              origin_name, origin, origin_name,
+                                              ((boundary - 1) // mcu) * mcu, size_name)
+                            raise ValueError(
+                                '{}={}, {}={}: {} with align={!r}; {}; '
+                                "or use align='expand' (may include extra source area). "
+                                'Exact pixel bounds require decoding, cropping, and re-encoding '
+                                '(additional lossy compression)'.format(
+                                    origin_name, origin, size_name, size, exc, align, remedy)) from None
+                        normalized.append(adjusted)
+                        continue
+                    if origin % mcu:
+                        message = '{}={} is not aligned; {} must be a multiple of {}'.format(
+                            origin_name, origin, origin_name, mcu)
+                        if extending:
+                            if extends:
+                                message += '; use {}={} (moves the source placement)'.format(
+                                    origin_name, (origin // mcu) * mcu)
+                            else:
+                                adjusted_origin, adjusted_size = self.__axis_to_image_boundaries(
+                                    origin, size or boundary - origin, boundary, False, mcu)
+                                message += ('; use {}={}, {}={} to retain the requested in-bounds '
+                                            'area on this axis (includes extra source pixels and '
+                                            'changes output {})').format(
+                                                origin_name, adjusted_origin, size_name,
+                                                adjusted_size, dimension)
+                            message += '; automatic alignment applies only to pure crops'
+                        else:
+                            message += ("; use align='expand' (keeps the requested in-bounds pixels "
+                                        "but may include extra area), or align='shrink' "
+                                        '(discards unaligned edges of the requested area and may be empty)')
+                        raise ValueError(message)
+                    size = size or boundary - origin
+                    if extends:
+                        # Older native releases ignore PERFECT for extension and
+                        # discard a partial source iMCU on the extended axis.
+                        if boundary % ext_mcu:
+                            trimmed = (boundary // ext_mcu) * ext_mcu
+                            if trimmed:
+                                edge = 'right-edge columns' if dimension == 'width' else 'bottom-edge rows'
+                                remedy = 'crop source {} to {} first (discards {} {}), or '.format(
+                                    dimension, trimmed, boundary - trimmed, edge)
+                            else:
+                                remedy = ('no non-empty source {} aligned to {} can be obtained '
+                                          'by cropping; ').format(dimension, ext_mcu)
+                            remedy += 'decode, pad, and re-encode (additional lossy compression)'
+                            raise ValueError(
+                                '{}={} cannot extend source {}={} with a partial iMCU; '
+                                'source {} must be a multiple of {}. Changing output {} or align '
+                                'does not fix the source dimension; {}'.format(
+                                    size_name, size, dimension, boundary, dimension, ext_mcu,
+                                    size_name, remedy))
+                    elif origin + size > boundary:
+                        raise ValueError(
+                            '{}={} with {}={} exceeds source {}={}; use {} <= {} '
+                            'or {}=0 for the remaining source extent '
+                            '(reduces output {} to the available source pixels)'.format(
+                                size_name, size, origin_name, origin, dimension, boundary,
+                                size_name, boundary - origin, size_name, dimension))
+                    normalized.append((origin, size))
+                if extending and jpeg_colorspace not in (TJCS_GRAY, TJCS_YCbCr, TJCS_RGB):
+                    colorspace = 'CMYK' if jpeg_colorspace == TJCS_CMYK else 'YCCK'
+                    raise ValueError(
+                        'w={}, h={} request extension of a {} JPEG; background extension '
+                        'supports only grayscale, YCbCr, and RGB JPEG images. Use a pixel-padding '
+                        'workflow that supports this colorspace, then re-encode (additional lossy '
+                        'compression); preserve color profiles explicitly'.format(w, h, colorspace))
+                (x, w), (y, h) = normalized
+                regions.append(CroppingRegion(x, y, w, h))
             except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    'Crop parameter {} must contain (x, y, w, h)'.format(
-                        index)) from exc
-            regions.append(CroppingRegion(
-                x=cls.__validate_resource_limit(
-                    'crop_parameters[{}].x'.format(index), x),
-                y=cls.__validate_resource_limit(
-                    'crop_parameters[{}].y'.format(index), y),
-                w=cls.__validate_resource_limit(
-                    'crop_parameters[{}].w'.format(index), w),
-                h=cls.__validate_resource_limit(
-                    'crop_parameters[{}].h'.format(index), h),
-            ))
+                raise type(exc)('crop_parameters[{}]: {}; {}'.format(
+                    index, exc, source_info)) from None
         return regions
 
     @staticmethod

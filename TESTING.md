@@ -184,6 +184,29 @@ bar and verifies that `crop()` and single-result `crop_multiple()` calls produce
 identical 489x731 JPEGs, retaining every remaining source pixel. It covers both
 explicit dimensions and zero dimensions (the remaining extent), at 8/12 bits.
 
+Batch usability tests cover `strict`, `expand`, and `shrink` alignment, comparing
+both JPEG bytes with `crop()` and decoded pixels with explicit expected source
+rectangles. They exercise large placement offsets, centered/edge placements,
+odd canvas dimensions, black/gray/white backgrounds, grayscale conversion,
+mixed crop/extension axes, and batches containing both automatic crops and
+strict extensions. Mixed batches must use a single native transform.
+
+Validation tests check the failing batch index, parameter, source dimensions,
+subsampling, and required alignment. They include empty inward crops, origins
+outside the source, placement overflow, partial source iMCUs, malformed tuples,
+numeric type/range errors, invalid alignment modes, and unsupported extension
+colorspaces. Invalid regions must be rejected before transformation, with the
+native handle released. Container, NumPy integer, input-mutation, positional
+argument, and metadata checks cover API compatibility.
+
+Recovery tests actually apply the suggested dimensions and offsets, then check
+every retained source pixel and the background. They verify source trimming and
+its discarded right/bottom edges, smaller-than-one-iMCU sources, grayscale block
+requirements, empty inward crops at interior and partial-edge positions, and
+canvas enlargement versus moving the source. Error text must describe added
+source area, discarded pixels, changed placement/dimensions, or recompression
+where applicable; changing output dimensions cannot fix a partial source iMCU.
+
 Expected pixels are sliced from the decoded **source JPEG**, so initial JPEG
 compression loss is not mistaken for a cropping error. Subsampled RGB checks
 use `TJFLAG_FASTUPSAMPLE` to avoid chroma interpolation across crop boundaries;
@@ -200,7 +223,7 @@ before/expected/after PNGs, an HTML gallery, and machine-readable JSON results:
 ```bash
 # Pillow is optional and is used only to render this report.
 python -m pip install Pillow
-python tests/render_crop_report.py --baseline-ref 13d197a \
+python tests/render_crop_report.py --baseline-ref 1ab0c23 \
   --library /path/to/libturbojpeg.so --output test_output/crop_report
 ```
 

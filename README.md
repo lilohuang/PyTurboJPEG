@@ -298,24 +298,150 @@ with open('optimized_output.jpg', 'wb') as f:
     f.write(optimized_data)
 ```
 
-Lossless crop origins must be aligned to the JPEG iMCU grid. The default
+`crop()` aligns crop origins to the JPEG iMCU grid. The default
 `preserve=False` rounds the origin down and expands the result to retain the
 whole requested area. `preserve=True` rounds it up so the result stays inside
 the requested area. In both modes, valid partial iMCUs at the right and bottom
 image edges are retained.
 
-`crop_multiple()` can extend grayscale, YCbCr, and RGB JPEGs with a background
-specified by `background_luminance` (0 = black, 1 = white). RGB backgrounds use
-each channel's own quantization table. CMYK/YCCK JPEGs support cropping but
-not background extension. On an extended axis, the `x` or `y` offset places
-the source inside the larger canvas, with background outside that rectangle.
+#### Batch cropping and background extension
+
+`crop_multiple()` accepts an iterable of `(x, y, w, h)` tuples and returns JPEG
+byte strings in the same order, using one native batch transform. The iterable
+may contain just one tuple. Each axis is interpreted separately:
+
+- If `w`/`h` is no larger than the corresponding source dimension, `x`/`y` is
+  a crop origin inside the source image.
+- `w=0` or `h=0` keeps everything from that origin to the source's right or
+  bottom edge. The output dimensions need not be multiples of the iMCU size.
+- If `w`/`h` is larger than the source dimension, that axis is extended.
+  `x`/`y` then places the source in the output canvas. The complete source must
+  fit along that axis: `x + source_width <= w` or `y + source_height <= h`.
+  Placement offsets may be larger than the source dimensions.
+
+For a 505x731 JPEG with 4:2:0 subsampling (16x16 iMCUs), remove a 16-pixel left
+black bar and retain the entire remaining image, including partial edge blocks:
+
+```python
+with open('input.jpg', 'rb') as f:
+    data = f.read()
+
+# Both forms produce the same 489x731 JPEG as
+# jpeg.crop(data, 16, 0, 489, 731, preserve=True).
+cropped = jpeg.crop_multiple(data, [(16, 0, 0, 0)])[0]
+explicit = jpeg.crop_multiple(data, [(16, 0, 489, 731)])[0]
+```
+
+The keyword-only `align` option controls **pure crops** (operations that do not
+extend either axis):
+
+| `align` | Behavior |
+| --- | --- |
+| `"strict"` (default) | Require aligned origins and an in-bounds rectangle. |
+| `"expand"` | Round origins down, retaining the requested area within the source; matches `crop(preserve=False)`. |
+| `"shrink"` | Round origins up, keeping the result inside the requested area; matches `crop(preserve=True)`. |
+
+For `expand` and `shrink`, the requested right/bottom edges stay fixed and are
+clipped to the source image. A zero dimension is resolved to the remaining
+source extent before alignment. If inward alignment leaves no pixels, the
+operation raises `ValueError`.
+
+```python
+# On the same 4:2:0 image, request (x=10, y=10, w=20, h=20).
+expanded = jpeg.crop_multiple(data, [(10, 10, 20, 20)], align='expand')[0]
+# Actual source rectangle: (0, 0, 30, 30)
+
+contained = jpeg.crop_multiple(data, [(10, 10, 20, 20)], align='shrink')[0]
+# Actual source rectangle: (16, 16, 14, 14)
+```
+
+Operations extending either axis always require aligned `x` **and** `y`, even
+with `align='expand'` or `'shrink'`. Their placement and crop offsets are never
+automatically shifted. Pure crops and extensions can be mixed in the same batch.
+Choosing an alignment mode does not change a requested extension into a crop.
+
+Background extension supports grayscale, YCbCr, and RGB JPEGs, with
+`background_luminance` from 0 (black) to 1 (white). RGB backgrounds use each
+channel's own quantization table. CMYK/YCCK JPEGs support cropping but not
+background extension. For example, center a 64x64 image in a 320x320 white canvas:
+
+```python
+import numpy as np
+from turbojpeg import TJPF_RGB, TJSAMP_420
+
+image = np.full((64, 64, 3), (30, 90, 160), dtype=np.uint8)
+source = jpeg.encode(image, pixel_format=TJPF_RGB, jpeg_subsample=TJSAMP_420)
+centered = jpeg.crop_multiple(
+    source, [(128, 128, 320, 320)], background_luminance=1.0)[0]
+```
 
 An extension requires the source dimension on each extended axis to be a
 multiple of its iMCU size; otherwise `ValueError` is raised consistently on
-all supported library versions. With YCbCr-to-grayscale conversion, this check
-uses the grayscale output's 8x8 blocks. Partial edges on an axis that is not extended
-are preserved. This prevents older libjpeg-turbo releases from silently
-discarding source pixels during extension.
+all supported library versions. With YCbCr-to-grayscale conversion, this source
+dimension check uses the grayscale output's 8x8 blocks; origins still follow the
+source JPEG's iMCU grid. Partial edges on an axis that is not extended are
+preserved. Alignment modes do not remove this source-dimension requirement.
+This prevents older libjpeg-turbo releases from silently discarding source
+pixels during extension. These operations do not decode and recompress pixels.
+
+Region validation errors identify the **zero-based** batch index, parameter,
+source dimensions, subsampling, and iMCU size. For example, an unaligned `x` in
+the third region raises (wrapped here for readability):
+
+```text
+crop_parameters[2]: x=10 is not aligned; x must be a multiple of 16;
+use align='expand' (keeps the requested in-bounds pixels but may include extra area),
+or align='shrink' (discards unaligned edges of the requested area and may be empty);
+source=505x731, subsampling=4:2:0, iMCU=16x16
+```
+
+Geometry errors suggest remedies and explain their costs:
+
+| Problem | Explicit remedy | Tradeoff |
+|---|---|---|
+| Unaligned origin in a pure crop | Choose `align='expand'` or `'shrink'`. | `expand` includes extra source area; `shrink` discards the unaligned part of the requested area and can leave no pixels. Neither recompresses the image. |
+| `shrink` leaves no pixels | Increase the requested extent to include the next aligned origin, using the minimum in the error. At a partial right/bottom edge with no later aligned origin, move the origin back or use `expand`. | Enlarging the request or moving back includes pixels outside the original request. Exact unaligned pixel bounds require decoding, cropping, and re-encoding, which adds lossy compression. |
+| A crop exceeds the right/bottom edge | Use the suggested maximum `w`/`h`, or `0` for the remaining extent. | The output becomes smaller than requested. An origin outside the source must also be moved inside, which selects a different source region. |
+| The source does not fit at the requested canvas offset | Move it to the suggested aligned `x`/`y`, or enlarge the canvas enough to fit the whole source at an aligned offset. | Moving changes placement; enlarging changes output dimensions. An unaligned offset still requires a manual adjustment for extensions. |
+| An extended source dimension has a partial iMCU | First crop the **source** dimension to the suggested multiple, or decode, pad, and re-encode. | Cropping discards the stated number of right-edge columns or bottom-edge rows without recompressing retained coefficients. Pixel padding preserves the full source area but re-encoding adds lossy compression. Changing output `w`/`h` or `align` cannot fix this source constraint. |
+| CMYK/YCCK background extension | Use a pixel-padding workflow supporting the source colorspace, then re-encode. | Re-encoding adds lossy compression. Preserve color profiles explicitly; this RGB example below is not a CMYK/YCCK workflow. |
+
+For example, extending a **100x64, 4:2:0** source to 128x64 requires a choice.
+If losing its four rightmost columns is acceptable, explicitly crop the source
+width to 96 (a multiple of 16) first:
+
+```python
+# data is the original 100x64, 4:2:0 JPEG.
+trimmed = jpeg.crop(data, 0, 0, 96, 64)
+padded = jpeg.crop_multiple(trimmed, [(0, 0, 128, 64)])[0]
+# Retains the first 96 source columns; adds 32 white columns on the right.
+```
+
+If every source column is required, pad decoded pixels instead. This 8-bit RGB
+example retains all 100 columns before re-encoding and adds 28 white columns:
+
+```python
+pixels = jpeg.decode(data, pixel_format=TJPF_RGB)
+canvas = np.full((64, 128, 3), 255, dtype=np.uint8)
+canvas[:, :100] = pixels
+padded = jpeg.encode(canvas, pixel_format=TJPF_RGB,
+                     jpeg_subsample=TJSAMP_420, quality=95)
+```
+
+This second approach performs an additional lossy compression pass: pixels can
+change even at `quality=100`, and ICC/EXIF metadata is not copied automatically.
+For 12-bit data, use `decode_12bit()`/`encode_12bit()`, `np.uint16`, and white
+value 4095. A source smaller than one iMCU on the extended axis cannot be fixed
+by cropping to a positive aligned dimension; use the pixel-padding approach.
+Remedies address the reported axis or constraint; the other axis and remaining
+batch entries must also be valid. The wrapper never silently trims the source,
+moves its placement, or falls back to recompression.
+
+All regions are validated before the native batch transform runs. Invalid region
+geometry raises `ValueError`, and invalid numeric types raise `TypeError`, without
+returning a partially completed list. Out-of-bounds crops or placements that
+previously raised a native `OSError` now raise a contextual `ValueError`.
+Errors in the JPEG itself or batch-wide options are reported for the whole call.
 
 ### In-Place Operations
 
