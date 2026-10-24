@@ -123,6 +123,12 @@ with open('input.jpg', 'rb') as f:
 
 ### YUV Decoding
 
+`decode_header()` can return `TJSAMP_UNKNOWN` (`-1`) for a valid JPEG with
+unusual sampling factors. Such images can still be decoded to packed pixels
+with `decode()` or `decode_12bit()`, according to their precision. Planar YUV
+operations, `scale_with_quality()`, and cropping require known subsampling
+and raise `ValueError` for these images.
+
 ```python
 # Decode to a YUV buffer
 with open('input.jpg', 'rb') as f:
@@ -165,6 +171,12 @@ raise `ValueError` instead of being silently ignored. For example,
 `TJFLAG_BOTTOMUP` applies to packed-pixel `encode()`/`decode()` calls, whereas
 planar YUV calls reject it. Progressive and DCT flags are rejected for lossless
 JPEG because those modes have no corresponding lossless semantics.
+
+With `TJFLAG_STOPONWARNING`, a native warning raises `OSError` because the
+operation stops before its output is necessarily complete. Without that flag,
+recoverable warnings emit `UserWarning` and return the completed result.
+If decoding into `dst` fails, the destination may have been partially written
+and must not be treated as a complete image.
 
 ### Encoding
 
@@ -291,6 +303,19 @@ Lossless crop origins must be aligned to the JPEG iMCU grid. The default
 whole requested area. `preserve=True` rounds it up so the result stays inside
 the requested area. In both modes, valid partial iMCUs at the right and bottom
 image edges are retained.
+
+`crop_multiple()` can extend grayscale, YCbCr, and RGB JPEGs with a background
+specified by `background_luminance` (0 = black, 1 = white). RGB backgrounds use
+each channel's own quantization table. CMYK/YCCK JPEGs support cropping but
+not background extension. On an extended axis, the `x` or `y` offset places
+the source inside the larger canvas, with background outside that rectangle.
+
+An extension requires the source dimension on each extended axis to be a
+multiple of its iMCU size; otherwise `ValueError` is raised consistently on
+all supported library versions. With YCbCr-to-grayscale conversion, this check
+uses the grayscale output's 8x8 blocks. Partial edges on an axis that is not extended
+are preserved. This prevents older libjpeg-turbo releases from silently
+discarding source pixels during extension.
 
 ### In-Place Operations
 

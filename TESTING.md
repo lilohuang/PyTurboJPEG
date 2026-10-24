@@ -66,9 +66,9 @@ python -m pip install -e ".[test]"
 
 ### Run All Tests
 ```bash
-pytest tests/test_turbojpeg.py -v
-# Or run all tests in the tests directory
 pytest tests/ -v
+# Or use the configured test directory
+pytest -v
 ```
 
 ### Run Specific Test Classes
@@ -97,7 +97,7 @@ pytest tests/test_turbojpeg.py::TestDecode::test_decode_basic -v
 
 ### Generate Coverage Report
 ```bash
-pytest tests/test_turbojpeg.py --cov=turbojpeg --cov-report=html
+pytest tests/ --cov=turbojpeg --cov-report=html
 ```
 
 ## Test Structure
@@ -167,6 +167,51 @@ The test suite uses synthetic test images generated via fixtures:
 - `encoded_sample_jpeg` - Pre-encoded JPEG for decoding tests
 - `valid_jpeg` - Valid encoded JPEG for testing
 - `tests/test_crop_input.jpg` - 200x200 image with colored quadrants for crop tests
+- `tests/crop_test_data.py` - Reproducible coordinate grids with labels every
+  32 pixels, per-pixel texture, and distinctive partial right/bottom edges.
+  The NumPy generator requires no image files or font dependencies.
+
+### Crop Geometry and Before/After Images
+
+`tests/test_crop_geometry.py` checks explicit expected source rectangles across
+all seven subsampling modes, 8/12-bit precision, color/grayscale output, tiny
+crops, inward/outward alignment, clamping, and partial edges. Batch tests cover
+ordering, zero dimensions (the remaining source extent), and unaligned origins.
+Extension tests check source placement and every background pixel, including
+operations that crop one axis and extend the other.
+The issue #88 regression generates a 505x731 image with a 16-pixel black left
+bar and verifies that `crop()` and single-result `crop_multiple()` calls produce
+identical 489x731 JPEGs, retaining every remaining source pixel. It covers both
+explicit dimensions and zero dimensions (the remaining extent), at 8/12 bits.
+
+Expected pixels are sliced from the decoded **source JPEG**, so initial JPEG
+compression loss is not mistaken for a cropping error. Subsampled RGB checks
+use `TJFLAG_FASTUPSAMPLE` to avoid chroma interpolation across crop boundaries;
+the grayscale checks independently verify luma. Expected rectangles are written
+explicitly rather than calculated with the wrapper's alignment helper.
+
+```bash
+pytest tests/test_crop_geometry.py -v
+```
+
+To compare the current checkout with a trusted Git revision and create labelled
+before/expected/after PNGs, an HTML gallery, and machine-readable JSON results:
+
+```bash
+# Pillow is optional and is used only to render this report.
+python -m pip install Pillow
+python tests/render_crop_report.py --baseline-ref 13d197a \
+  --library /path/to/libturbojpeg.so --output test_output/crop_report
+```
+
+The baseline revision must exist in the local Git history. Omit `--library` to
+use `TURBOJPEG_LIB_PATH` or normal library discovery. Both implementations use
+the same native library and the same JPEG input bytes. The report checks exact
+JPEG-byte compatibility for ordinary crops separately from intentional fixes
+to background extension. Its partial-edge extension example displays the
+requested canvas for reference; the corrected implementation rejects that
+unsupported operation. Open `test_output/crop_report/index.html` to inspect
+the images; tiny crops are enlarged with nearest-neighbor sampling.
 
 ## Test Statistics
 
