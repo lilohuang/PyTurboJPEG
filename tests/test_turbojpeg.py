@@ -3419,6 +3419,12 @@ class TestJPEGColorspace:
             return bits, jpeg_instance.encode, jpeg_instance.decode
         return bits, jpeg_instance.encode_12bit, jpeg_instance.decode_12bit
 
+    @pytest.fixture(params=[
+        TJSAMP_444, TJSAMP_422, TJSAMP_420, TJSAMP_440, TJSAMP_411, TJSAMP_441,
+    ], ids=['444', '422', '420', '440', '411', '441'])
+    def rgb_subsample(self, request):
+        return request.param
+
     @staticmethod
     def image(bits, channels=3):
         return np.random.default_rng(120).integers(
@@ -3450,10 +3456,43 @@ class TestJPEGColorspace:
         assert output.shape == (27, 35, 1 if colorspace == TJCS_GRAY else channels)
         assert output.dtype == source.dtype
 
+    @pytest.mark.parametrize('shape', [(1, 1), (27, 35), (32, 48)],
+                             ids=['single_pixel', 'partial_mcus', 'complete_mcus'])
+    def test_rgb_subsampling_preserves_header_and_constant_channels(
+            self, jpeg_instance, codec, rgb_subsample, shape):
+        bits, encode, decode = codec
+        source = np.empty((*shape, 3), dtype=np.uint8 if bits == 8 else np.uint16)
+        source[:] = np.array([32, 128, 224]) << (bits - 8)
+        data = encode(source, quality=100, pixel_format=TJPF_RGB,
+                      jpeg_colorspace=TJCS_RGB, jpeg_subsample=rgb_subsample)
+        assert jpeg_instance.decode_header(data, return_precision=True) == (
+            shape[1], shape[0], rgb_subsample, TJCS_RGB, bits)
+        actual = decode(data, pixel_format=TJPF_RGB)
+        assert actual.dtype == source.dtype
+        np.testing.assert_allclose(actual, source, rtol=0, atol=1)
+
+    def test_rgb_subsampling_matches_expected_channel_resolution(
+            self, codec, rgb_subsample):
+        """Stripes reveal which channels lose horizontal or vertical detail."""
+        bits, encode, decode = codec
+        y, x = np.indices((32, 48))
+        maximum = 240 << (bits - 8)
+        source = (np.stack((x % 2, x % 2, y % 2), axis=-1) * maximum).astype(
+            np.uint8 if bits == 8 else np.uint16)
+        data = encode(source, quality=100, pixel_format=TJPF_RGB,
+                      jpeg_colorspace=TJCS_RGB, jpeg_subsample=rgb_subsample)
+        expected = source.copy()
+        if rgb_subsample in (TJSAMP_422, TJSAMP_420, TJSAMP_411):
+            expected[:, :, 1] = maximum // 2
+        if rgb_subsample in (TJSAMP_440, TJSAMP_420, TJSAMP_441):
+            expected[:, :, 2] = maximum // 2
+        np.testing.assert_allclose(
+            decode(data, pixel_format=TJPF_RGB), expected, rtol=0, atol=1)
+
     @pytest.mark.parametrize('changed_channel', [0, 1, 2])
     @pytest.mark.parametrize('quality', [30, 85])
     def test_rgb_channels_are_compressed_independently(
-            self, codec, changed_channel, quality):
+            self, codec, rgb_subsample, changed_channel, quality):
         """Changing one stain must not affect either of the other two stains."""
         bits, encode, decode = codec
         original = self.image(bits)
@@ -3461,7 +3500,7 @@ class TestJPEGColorspace:
         changed[:, :, changed_channel] = 0
         decoded = [decode(encode(
             source, quality=quality, pixel_format=TJPF_RGB,
-            jpeg_colorspace=TJCS_RGB, jpeg_subsample=TJSAMP_444),
+            jpeg_colorspace=TJCS_RGB, jpeg_subsample=rgb_subsample),
             pixel_format=TJPF_RGB) for source in (original, changed)]
         for channel in range(3):
             equal = np.array_equal(
@@ -3476,15 +3515,15 @@ class TestJPEGColorspace:
         (TJPF_ARGB, (3, 0, 1, 2)), (TJPF_ABGR, (3, 2, 1, 0)),
     ])
     def test_rgb_storage_respects_input_pixel_layout(
-            self, codec, pixel_format, layout):
+            self, codec, rgb_subsample, pixel_format, layout):
         bits, encode, decode = codec
         source = self.image(bits, 4)
         expected = encode(
             source[:, :, :3], pixel_format=TJPF_RGB,
-            jpeg_colorspace=TJCS_RGB, jpeg_subsample=TJSAMP_444)
+            jpeg_colorspace=TJCS_RGB, jpeg_subsample=rgb_subsample)
         actual = encode(
             source[:, :, layout], pixel_format=pixel_format,
-            jpeg_colorspace=TJCS_RGB, jpeg_subsample=TJSAMP_444)
+            jpeg_colorspace=TJCS_RGB, jpeg_subsample=rgb_subsample)
         np.testing.assert_array_equal(
             decode(actual, pixel_format=TJPF_RGB),
             decode(expected, pixel_format=TJPF_RGB))
@@ -3572,11 +3611,11 @@ class TestJPEGColorspace:
         with pytest.raises(error, match='jpeg_colorspace'):
             encode(self.image(bits), jpeg_colorspace=value)
 
-    def test_numpy_integer_colorspace(self, jpeg_instance, codec):
+    def test_numpy_integer_colorspace(self, jpeg_instance, codec, rgb_subsample):
         bits, encode, _ = codec
         data = encode(self.image(bits), jpeg_colorspace=np.int64(TJCS_RGB),
-                      jpeg_subsample=np.int64(TJSAMP_444))
-        assert jpeg_instance.decode_header(data)[2:] == (TJSAMP_444, TJCS_RGB)
+                      jpeg_subsample=np.int64(rgb_subsample))
+        assert jpeg_instance.decode_header(data)[2:] == (rgb_subsample, TJCS_RGB)
 
     @pytest.mark.parametrize('bits', [8, 12, 16])
     def test_default_colorspace_does_not_call_native_setter(
@@ -3625,17 +3664,14 @@ class TestJPEGColorspace:
     @pytest.mark.parametrize('subsample', [
         TJSAMP_422, TJSAMP_420, TJSAMP_GRAY, TJSAMP_440, TJSAMP_411, TJSAMP_441,
     ])
-    @pytest.mark.parametrize('pixel_format,colorspace,channels', [
-        (TJPF_RGB, TJCS_RGB, 3), (TJPF_CMYK, TJCS_CMYK, 4),
-    ])
-    def test_rgb_and_cmyk_reject_subsampling(
-            self, codec, subsample, pixel_format, colorspace, channels):
+    def test_cmyk_rejects_subsampling(self, codec, subsample):
         bits, encode, _ = codec
         with pytest.raises(ValueError, match='jpeg_subsample=TJSAMP_444'):
-            encode(self.image(bits, channels), pixel_format=pixel_format,
-                   jpeg_colorspace=colorspace, jpeg_subsample=subsample)
+            encode(self.image(bits, 4), pixel_format=TJPF_CMYK,
+                   jpeg_colorspace=TJCS_CMYK, jpeg_subsample=subsample)
 
     @pytest.mark.parametrize('colorspace,subsample,pixel_format,channels', [
+        (TJCS_RGB, TJSAMP_GRAY, TJPF_RGB, 3),
         (TJCS_GRAY, TJSAMP_422, TJPF_RGB, 3),
         (TJCS_GRAY, TJSAMP_444, TJPF_GRAY, 1),
         (TJCS_YCbCr, TJSAMP_GRAY, TJPF_RGB, 3),
@@ -3648,24 +3684,58 @@ class TestJPEGColorspace:
             encode(self.image(bits, channels), pixel_format=pixel_format,
                    jpeg_colorspace=colorspace, jpeg_subsample=subsample)
 
-    def test_rgb_requires_explicit_444(self, codec):
+    @pytest.mark.parametrize('pixel_format', [None, TJPF_RGB], ids=['default_bgr', 'rgb'])
+    def test_rgb_uses_default_422(self, jpeg_instance, codec, pixel_format):
+        bits, encode, decode = codec
+        source = self.image(bits)
+        # Omitting pixel_format also exercises encode()'s validation fast path.
+        kwargs = {} if pixel_format is None else dict(pixel_format=pixel_format)
+        data = encode(source, jpeg_colorspace=TJCS_RGB, **kwargs)
+        assert data == encode(source, jpeg_colorspace=TJCS_RGB,
+                              jpeg_subsample=TJSAMP_422, **kwargs)
+        assert jpeg_instance.decode_header(data, return_precision=True) == (
+            35, 27, TJSAMP_422, TJCS_RGB, bits)
+        assert decode(data, **kwargs).shape == source.shape
+
+    @pytest.mark.parametrize('subsample,error', [
+        (TJSAMP_UNKNOWN, ValueError), (7, ValueError),
+        (True, TypeError), (1.0, TypeError), ('422', TypeError),
+        (TJSAMP_GRAY, ValueError),
+    ])
+    def test_invalid_rgb_subsampling_is_rejected_before_native_init(
+            self, jpeg_instance, codec, monkeypatch, subsample, error):
         bits, encode, _ = codec
-        with pytest.raises(ValueError, match='jpeg_subsample=TJSAMP_444'):
-            encode(self.image(bits), jpeg_colorspace=TJCS_RGB)
+
+        def unexpected_init(mode):
+            pytest.fail('Invalid RGB subsampling must be rejected before native init')
+
+        monkeypatch.setattr(jpeg_instance, '_TurboJPEG__init', unexpected_init)
+        with pytest.raises(error, match='jpeg_subsample'):
+            encode(self.image(bits), jpeg_colorspace=TJCS_RGB,
+                   jpeg_subsample=subsample)
 
     @pytest.mark.parametrize('lossless', [False, True])
-    def test_rgb_in_place_encode(self, jpeg_instance, lossless):
+    def test_rgb_in_place_encode(self, jpeg_instance, rgb_subsample, lossless):
         source = self.image(8)
-        size = jpeg_instance.buffer_size(source, jpeg_subsample=TJSAMP_444)
+        size = jpeg_instance.buffer_size(
+            source, jpeg_subsample=TJSAMP_444 if lossless else rgb_subsample)
         storage = bytearray([0xA5]) * (size + 16)
         dst = memoryview(storage)[:size]
-        kwargs = dict(jpeg_colorspace=TJCS_RGB, jpeg_subsample=TJSAMP_444,
+        kwargs = dict(jpeg_colorspace=TJCS_RGB, jpeg_subsample=rgb_subsample,
                       lossless=lossless)
         expected = jpeg_instance.encode(source, **kwargs)
         result, written = jpeg_instance.encode(source, dst=dst, **kwargs)
         assert result is dst
         assert bytes(dst[:written]) == expected
         assert storage[size:] == bytes([0xA5]) * 16
+
+    def test_rgb_default_subsampling_with_default_buffer(self, jpeg_instance):
+        source = self.image(8)
+        dst = bytearray(jpeg_instance.buffer_size(source))
+        expected = jpeg_instance.encode(source, jpeg_colorspace=TJCS_RGB)
+        result, written = jpeg_instance.encode(source, dst=dst, jpeg_colorspace=TJCS_RGB)
+        assert result is dst
+        assert bytes(dst[:written]) == expected
 
     def test_rgb_rejects_buffer_sized_for_422(self, jpeg_instance):
         source = self.image(8)
@@ -3677,18 +3747,18 @@ class TestJPEGColorspace:
                                  jpeg_subsample=TJSAMP_444)
         assert bytes(dst) == before
 
-    def test_rgb_progressive_encoding(self, jpeg_instance, codec):
+    def test_rgb_progressive_encoding(self, jpeg_instance, codec, rgb_subsample):
         bits, encode, decode = codec
         data = encode(self.image(bits), jpeg_colorspace=TJCS_RGB,
-                      jpeg_subsample=TJSAMP_444, flags=TJFLAG_PROGRESSIVE)
+                      jpeg_subsample=rgb_subsample, flags=TJFLAG_PROGRESSIVE)
         assert b'\xff\xc2' in data
-        assert jpeg_instance.decode_header(data)[3] == TJCS_RGB
+        assert jpeg_instance.decode_header(data)[2:] == (rgb_subsample, TJCS_RGB)
         assert decode(data).shape == (27, 35, 3)
 
-    def test_rgb_bottomup_encoding(self, codec):
+    def test_rgb_bottomup_encoding(self, codec, rgb_subsample):
         bits, encode, decode = codec
         source = self.image(bits)
-        kwargs = dict(jpeg_colorspace=TJCS_RGB, jpeg_subsample=TJSAMP_444)
+        kwargs = dict(jpeg_colorspace=TJCS_RGB, jpeg_subsample=rgb_subsample)
         actual = encode(source, flags=TJFLAG_BOTTOMUP, **kwargs)
         expected = encode(source[::-1], **kwargs)
         np.testing.assert_array_equal(decode(actual), decode(expected))

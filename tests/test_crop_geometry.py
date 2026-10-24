@@ -107,18 +107,27 @@ def test_batch_does_not_silently_align_origins(jpeg, source):
 @pytest.mark.parametrize('case', [case for case in CROP_CASES if case.name in (
     'tiny_expand', 'interior_preserve', 'clamp_edges_preserve', 'whole_image',
 )], ids=lambda case: case.name)
-def test_rgb_storage_crop_matches_all_source_channels(jpeg, codec, case):
+@pytest.mark.parametrize('sampling', [
+    item for item in SAMPLING if item[1] != TJSAMP_GRAY
+], ids=lambda item: item[0])
+def test_rgb_storage_crop_matches_all_source_channels(jpeg, codec, case, sampling):
     bits, encode, decode = codec
+    _, subsample, mcu = sampling
     encoded = encode(coordinate_image(bits=bits), pixel_format=TJPF_RGB,
-                     jpeg_colorspace=TJCS_RGB, jpeg_subsample=TJSAMP_444, quality=100)
-    pixels = decode(encoded, pixel_format=TJPF_RGB)
+                     jpeg_colorspace=TJCS_RGB, jpeg_subsample=subsample, quality=100)
+    pixels = decode(encoded, pixel_format=TJPF_RGB, flags=TJFLAG_FASTUPSAMPLE)
     result = jpeg.crop(encoded, *case.requested, preserve=case.preserve)
-    assert_rectangle(jpeg, decode, result, pixels, case.expected[(8, 8)])
+    assert_rectangle(jpeg, decode, result, pixels, case.expected[mcu])
+    assert jpeg.decode_header(result)[2:] == (subsample, TJCS_RGB)
+    assert jpeg.crop_multiple(encoded, [case.requested],
+                              align='shrink' if case.preserve else 'expand') == [result]
 
 
 @pytest.mark.parametrize(('colorspace', 'subsample'), [
-    (TJCS_RGB, TJSAMP_444), (TJCS_YCbCr, TJSAMP_420),
-], ids=['rgb', 'ycbcr420'])
+    (TJCS_RGB, subsample) for _, subsample, _ in SAMPLING if subsample != TJSAMP_GRAY
+] + [(TJCS_YCbCr, TJSAMP_420)], ids=[
+    'rgb' + name for name, subsample, _ in SAMPLING if subsample != TJSAMP_GRAY
+] + ['ycbcr420'])
 @pytest.mark.parametrize('luminance', [0.0, 1.0], ids=['black', 'white'])
 @pytest.mark.parametrize(('region', 'source_rect', 'placement'), [
     ((32, 32, 320, 256), (0, 0, 256, 192), (32, 32)),
@@ -213,7 +222,11 @@ def assert_canvas_pixels(actual, source, offset, bits, luminance):
 @pytest.mark.parametrize(('subsample', 'colorspace'), [
     (subsample, TJCS_GRAY if subsample == TJSAMP_GRAY else TJCS_YCbCr)
     for _, subsample, _ in SAMPLING
-] + [(TJSAMP_444, TJCS_RGB)], ids=[item[0] for item in SAMPLING] + ['rgb'])
+] + [
+    (subsample, TJCS_RGB) for _, subsample, _ in SAMPLING if subsample != TJSAMP_GRAY
+], ids=[item[0] for item in SAMPLING] + [
+    'rgb' + name for name, subsample, _ in SAMPLING if subsample != TJSAMP_GRAY
+])
 @pytest.mark.parametrize('luminance', [0.0, 0.5, 1.0], ids=['black', 'gray', 'white'])
 def test_large_canvas_placements_preserve_pixels_and_background(
         jpeg, codec, subsample, colorspace, luminance):
@@ -266,6 +279,29 @@ def test_large_placement_with_crop_on_other_axis(
     x, y, width, height = rectangle
     actual = decode(result, pixel_format=TJPF_RGB, flags=TJFLAG_FASTUPSAMPLE)
     assert_canvas_pixels(actual, source[y:y + height, x:x + width], offset, bits, 1.0)
+
+
+@pytest.mark.parametrize('sampling', [
+    item for item in SAMPLING if item[1] != TJSAMP_GRAY
+], ids=lambda item: item[0])
+@pytest.mark.parametrize('luminance', [0.0, 0.5, 1.0], ids=['black', 'gray', 'white'])
+@pytest.mark.parametrize(('size', 'region', 'rectangle', 'offset', 'output_size'), [
+    ((64, 67), (128, 32, 257, 0), (0, 32, 64, 35), (128, 0), (257, 35)),
+    ((67, 64), (32, 128, 0, 257), (32, 0, 35, 64), (0, 128), (35, 257)),
+], ids=['extend_x_partial_y', 'partial_x_extend_y'])
+def test_rgb_extension_preserves_partial_edges_on_other_axis(
+        jpeg, codec, sampling, luminance, size, region, rectangle, offset, output_size):
+    bits, encode, decode = codec
+    _, subsample, _ = sampling
+    encoded = encode(coordinate_image(*size, bits=bits), quality=100,
+                     pixel_format=TJPF_RGB, jpeg_colorspace=TJCS_RGB,
+                     jpeg_subsample=subsample)
+    source = decode(encoded, pixel_format=TJPF_RGB, flags=TJFLAG_FASTUPSAMPLE)
+    result = jpeg.crop_multiple(encoded, [region], background_luminance=luminance)[0]
+    assert jpeg.decode_header(result) == (*output_size, subsample, TJCS_RGB)
+    x, y, width, height = rectangle
+    actual = decode(result, pixel_format=TJPF_RGB, flags=TJFLAG_FASTUPSAMPLE)
+    assert_canvas_pixels(actual, source[y:y + height, x:x + width], offset, bits, luminance)
 
 
 @pytest.mark.parametrize('align', ['expand', 'shrink'])

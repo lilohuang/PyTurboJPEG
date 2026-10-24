@@ -285,6 +285,8 @@ class BackgroundStruct(Structure):
         Quantized background DC coefficient for each component plane.
     x, y: c_int
         Origin of the retained source rectangle in the output canvas.
+    subsample: c_int
+        JPEG subsampling mode, used to locate source pixels in RGB G/B planes.
     """
     _fields_ = [
         ("w", c_int),
@@ -292,7 +294,8 @@ class BackgroundStruct(Structure):
         ("components", c_int),
         ("dc", c_int * 3),
         ("x", c_int),
-        ("y", c_int)
+        ("y", c_int),
+        ("subsample", c_int)
     ]
 
 class TransformStruct(Structure):
@@ -304,7 +307,7 @@ class TransformStruct(Structure):
         ("customFilter", CUSTOMFILTER)
     ]
 
-# Each filled full-resolution component uses 8x8 DCT blocks.
+# Each component uses 8x8 DCT blocks in its own sampling resolution.
 MCU_WIDTH = 8
 MCU_HEIGHT = 8
 MCU_SIZE = 64
@@ -344,21 +347,26 @@ def _fill_background(
     if not 0 <= componentID < background_data.components:
         return
 
-    # Only full-resolution planes are filled: Y/gray or all three RGB planes.
     ArrayType = c_short * (arrayRegion.w * arrayRegion.h)
     array_pointer = cast(coeffs_ptr, POINTER(ArrayType))
     coeffs = np.frombuffer(array_pointer.contents, dtype=np.int16).reshape(
         arrayRegion.h // MCU_HEIGHT, arrayRegion.w // MCU_WIDTH, MCU_SIZE)
     dc = background_data.dc[componentID]
 
+    # R/Y/gray are full resolution. In subsampled RGB, each G/B block covers
+    # a larger source rectangle, while callback coordinates remain in samples
+    # of that component plane.
+    block_width = MCU_WIDTH if componentID == 0 else tjMCUWidth[background_data.subsample]
+    block_height = MCU_HEIGHT if componentID == 0 else tjMCUHeight[background_data.subsample]
+
     # Fill complete blocks outside the source, including across a partial
     # edge on the other axis. Account for callbacks covering only part of a
     # component plane, and never modify a block containing source pixels.
-    left = max(0, background_data.x // MCU_WIDTH - arrayRegion.x // MCU_WIDTH)
-    top = max(0, background_data.y // MCU_HEIGHT - arrayRegion.y // MCU_HEIGHT)
-    right = max(0, (background_data.x + background_data.w + MCU_WIDTH - 1) // MCU_WIDTH -
+    left = max(0, background_data.x // block_width - arrayRegion.x // MCU_WIDTH)
+    top = max(0, background_data.y // block_height - arrayRegion.y // MCU_HEIGHT)
+    right = max(0, (background_data.x + background_data.w + block_width - 1) // block_width -
                 arrayRegion.x // MCU_WIDTH)
-    bottom = max(0, (background_data.y + background_data.h + MCU_HEIGHT - 1) // MCU_HEIGHT -
+    bottom = max(0, (background_data.y + background_data.h + block_height - 1) // block_height -
                  arrayRegion.y // MCU_HEIGHT)
     coeffs[:, :left, 0] = dc
     coeffs[:top, :, 0] = dc
@@ -993,7 +1001,7 @@ class TurboJPEG(object):
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         jpeg_subsample : int
-            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.) - ignored if lossless=True
+            JPEG component subsampling (TJSAMP_444, TJSAMP_422, etc.) - ignored if lossless=True
         flags : int
             Compression flags
         dst : writable contiguous buffer or None
@@ -1013,8 +1021,11 @@ class TurboJPEG(object):
             pixel_format. None and TJCS_DEFAULT preserve the library's
             automatic selection, including with libjpeg-turbo versions
             older than 3.2.
-            For lossy encoding, RGB/CMYK require TJSAMP_444, GRAY requires
-            TJSAMP_GRAY, and YCbCr/YCCK require non-grayscale subsampling.
+            For lossy encoding, CMYK requires TJSAMP_444, GRAY requires
+            TJSAMP_GRAY, and RGB/YCbCr/YCCK require non-grayscale subsampling.
+            RGB uses the requested subsampling, including the default 4:2:2.
+            Use TJSAMP_444 to retain full resolution in all three channels;
+            other modes reduce G/B resolution without mixing channels.
             RGB inputs support RGB, YCbCr, or GRAY output; grayscale inputs
             support only GRAY; CMYK inputs support CMYK or YCCK.
             Lossless encoding accepts only the input's native colorspace
@@ -1291,7 +1302,7 @@ class TurboJPEG(object):
         pixel_format : int
             Pixel format (TJPF_RGB, TJPF_BGR, etc.)
         jpeg_subsample : int
-            Chroma subsampling (TJSAMP_444, TJSAMP_422, etc.) - ignored if lossless=True
+            JPEG component subsampling (TJSAMP_444, TJSAMP_422, etc.) - ignored if lossless=True
         flags : int
             Compression flags
         lossless : bool
@@ -1700,6 +1711,7 @@ class TurboJPEG(object):
                         (c_int * 3)(*background_coefficients),
                         crop_region.x if extends_width else 0,
                         crop_region.y if extends_height else 0,
+                        jpeg_subsample,
                     )
                     callback = CUSTOMFILTER(fill_background)
                     callback_data_refs.append(callback_data)
@@ -2563,17 +2575,17 @@ class TurboJPEG(object):
             raise ValueError(
                 'jpeg_colorspace={} is incompatible with pixel_format={}'
                 .format(jpeg_colorspace, pixel_format))
-        elif jpeg_colorspace in (TJCS_RGB, TJCS_CMYK):
+        elif jpeg_colorspace == TJCS_CMYK:
             if jpeg_subsample != TJSAMP_444:
                 raise ValueError(
-                    'RGB and CMYK JPEG require jpeg_subsample=TJSAMP_444')
+                    'CMYK JPEG requires jpeg_subsample=TJSAMP_444')
         elif jpeg_colorspace == TJCS_GRAY:
             if jpeg_subsample != TJSAMP_GRAY:
                 raise ValueError(
                     'Grayscale JPEG requires jpeg_subsample=TJSAMP_GRAY')
         elif jpeg_subsample == TJSAMP_GRAY:
             raise ValueError(
-                'YCbCr and YCCK JPEG require non-grayscale jpeg_subsample')
+                'RGB, YCbCr, and YCCK JPEG require non-grayscale jpeg_subsample')
         return jpeg_colorspace
 
     @classmethod

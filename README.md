@@ -226,7 +226,8 @@ or later, PyTurboJPEG supports this option with every supported version
 is preserved by leaving its colorspace setting untouched.
 
 To compress three independent channels (for example, distinct stain signals)
-without an RGB-to-YCbCr conversion, explicitly select RGB storage and 4:4:4:
+without an RGB-to-YCbCr conversion, select RGB storage. The recommended 4:4:4
+setting retains the full sampling resolution of every channel:
 
 ```python
 from turbojpeg import TJPF_RGB, TJCS_RGB, TJSAMP_444
@@ -251,18 +252,25 @@ Explicit colorspace selection uses these rules for lossy encoding:
 
 | `jpeg_colorspace` | Supported input pixel formats | Required `jpeg_subsample` |
 | --- | --- | --- |
-| `TJCS_RGB` | RGB/BGR and their four-channel variants | `TJSAMP_444` |
+| `TJCS_RGB` | RGB/BGR and their four-channel variants | Any except `TJSAMP_GRAY` |
 | `TJCS_YCbCr` | RGB/BGR and their four-channel variants | Any except `TJSAMP_GRAY` |
 | `TJCS_GRAY` | RGB/BGR variants or `TJPF_GRAY` | `TJSAMP_GRAY` |
 | `TJCS_CMYK` | `TJPF_CMYK` | `TJSAMP_444` |
 | `TJCS_YCCK` | `TJPF_CMYK` | Any except `TJSAMP_GRAY` |
 
-Conflicting settings raise `ValueError`. In particular, specifying
-`jpeg_colorspace=TJCS_RGB` also requires explicitly selecting `TJSAMP_444`,
-since the default subsampling is 4:2:2. Four-channel RGB formats retain their
-existing behavior: the alpha/unused channel is not stored in the JPEG.
-When reusing an output buffer, size it with
-`jpeg.buffer_size(image, jpeg_subsample=TJSAMP_444)` for RGB storage.
+Conflicting settings raise `ValueError`. Specifying `jpeg_colorspace=TJCS_RGB`
+alone uses the existing default subsampling, `TJSAMP_422`. RGB storage supports
+4:4:4, 4:2:2, 4:2:0, 4:4:0, 4:1:1, and 4:4:1. Modes other than 4:4:4 reduce
+the spatial resolution of G and B while retaining R at full resolution; they
+still avoid RGB-to-YCbCr conversion and do not mix the channels. Use 4:4:4 when
+each independent channel needs its full sampling resolution.
+
+Four-channel RGB formats retain their existing behavior: the alpha/unused
+channel is not stored in the JPEG. When reusing an output buffer for lossy
+encoding, pass the same `jpeg_subsample` to `buffer_size()` and `encode()`.
+For example, use `jpeg.buffer_size(image, jpeg_subsample=TJSAMP_444)` with the
+4:4:4 example above. Lossless encoding still uses 4:4:4 regardless of the
+requested subsampling.
 
 Lossless encoding already preserves the input colorspace without conversion.
 With `lossless=True`, or when using `encode_16bit()`, `None` and `TJCS_DEFAULT`
