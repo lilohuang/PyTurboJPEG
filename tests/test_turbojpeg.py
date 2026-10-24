@@ -3343,8 +3343,9 @@ class TestICCProfile:
         kwargs = dict(jpeg_colorspace=TJCS_RGB, jpeg_subsample=TJSAMP_444,
                       icc_profile=MINIMAL_SRGB_ICC)
         if in_place:
-            size = jpeg_instance.buffer_size(sample_bgr_image, TJSAMP_444)
-            dst = bytearray(size + len(MINIMAL_SRGB_ICC))
+            size = jpeg_instance.buffer_size(
+                sample_bgr_image, TJSAMP_444, icc_profile=MINIMAL_SRGB_ICC)
+            dst = bytearray(size)
             result, written = jpeg_instance.encode(
                 sample_bgr_image, dst=dst, **kwargs)
             assert result is dst
@@ -3377,10 +3378,8 @@ class TestICCProfile:
     def test_icc_profile_in_place_encode_does_not_reallocate(
             self, jpeg_instance, sample_bgr_image):
         """ICC bytes are included when validating an in-place destination."""
-        buffer_size = (
-            jpeg_instance.buffer_size(sample_bgr_image) +
-            len(MINIMAL_SRGB_ICC)
-        )
+        buffer_size = jpeg_instance.buffer_size(
+            sample_bgr_image, icc_profile=MINIMAL_SRGB_ICC)
         dst = bytearray(buffer_size)
 
         result, n_bytes = jpeg_instance.encode(

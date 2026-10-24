@@ -181,7 +181,7 @@ jobs:
         python -m pip install --upgrade build twine
         python -m build
         python -m twine check dist/*
-    - name: Install libjpeg-turbo for wheel test
+    - name: Install libjpeg-turbo for package tests
       run: |
         wget -q https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-official_3.2.0_amd64.deb \
           -O "$RUNNER_TEMP/libjpeg-turbo.deb"
@@ -220,3 +220,23 @@ jobs:
         np.testing.assert_array_equal(jpeg.decode(lossless, pixel_format=TJPF_RGB), image)
         print(f'Installed PyTurboJPEG {turbojpeg.__version__}: {module_path}')
         PY
+
+    - name: Run tests from the source distribution
+      run: |
+        python -m venv "$RUNNER_TEMP/sdist-test"
+        python - <<'PY'
+        import os
+        import tarfile
+        from pathlib import Path
+
+        archive, = Path('dist').glob('*.tar.gz')
+        destination = Path(os.environ['RUNNER_TEMP']) / 'sdist-source'
+        with tarfile.open(archive) as source:
+            source.extractall(destination, filter='data')
+        root, = destination.iterdir()
+        for name in ('conftest.py', 'crop_test_data.py', 'test_crop_input.jpg'):
+            assert (root / 'tests' / name).is_file(), name
+        PY
+        cd "$RUNNER_TEMP"/sdist-source/*
+        "$RUNNER_TEMP/sdist-test/bin/python" -m pip install '.[test]'
+        "$RUNNER_TEMP/sdist-test/bin/python" -m pytest tests/ -q

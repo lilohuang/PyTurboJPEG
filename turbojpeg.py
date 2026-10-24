@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 __author__ = 'Lilo Huang <kuso.cc@gmail.com>'
-__version__ = '2.6.0'
+__version__ = '2.6.1'
 
 from ctypes import (
     CFUNCTYPE,
@@ -48,6 +48,7 @@ import platform
 import numpy as np
 import warnings
 import os
+import re
 from struct import unpack
 
 # default libTurboJPEG library path
@@ -81,6 +82,31 @@ DEFAULT_LIB_PATHS = {
 # see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
 TJERR_WARNING = 0
 TJERR_FATAL = 1
+
+# In libjpeg-turbo 3.0--3.2, a fatal error following a warning can still
+# report TJERR_WARNING.  The fatal error overwrites the message, however.
+# Only accept the known JWRN_* messages from jerror.h; fail closed for
+# unknown messages rather than returning an unfinished native output.
+# https://github.com/libjpeg-turbo/libjpeg-turbo/blob/3.2.0/src/jerror.h
+_RECOVERABLE_WARNING = re.compile(
+    r'Unknown Adobe color transform code [0-9]+|'
+    r'Corrupt JPEG data: bad arithmetic code|'
+    r'Inconsistent progression sequence for component [0-9]+ coefficient [0-9]+|'
+    r'Corrupt JPEG data: [0-9]+ extraneous bytes before marker 0x[0-9a-f]{2}|'
+    r'Corrupt JPEG data: premature end of data segment|'
+    r'Corrupt JPEG data: bad Huffman code|'
+    r'Warning: unknown JFIF revision number [0-9]+\.[0-9]+|'
+    r'Premature end of JPEG file|'
+    r'Corrupt JPEG data: found marker 0x[0-9a-f]{2} instead of RST[0-9]+|'
+    r'Invalid SOS parameters for sequential JPEG|'
+    r'Application transferred too many scanlines|'
+    r'Corrupt JPEG data: bad ICC marker')
+
+# APP2 payload: 65535-byte marker length minus its 2-byte length field and
+# the 14-byte ICC header.  Each chunk also needs a 2-byte marker prefix.
+_ICC_CHUNK_SIZE = 65519
+_ICC_MARKER_OVERHEAD = 18
+_MAX_ICC_PROFILE_SIZE = 255 * _ICC_CHUNK_SIZE
 
 # color spaces
 # see details in https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/src/turbojpeg.h
@@ -767,18 +793,24 @@ class TurboJPEG(object):
                 self.__enforce_max_pixels(handle)
             icc_buf = c_void_p()
             icc_size = c_size_t()
-            status = self.__get_icc_profile(handle, byref(icc_buf), byref(icc_size))
-            if status != 0:
-                # A non-fatal return (e.g. no profile present) should return None
-                err_code = self.__get_error_code(handle)
-                if err_code == TJERR_WARNING:
+            try:
+                status = self.__get_icc_profile(
+                    handle, byref(icc_buf), byref(icc_size))
+                if status != 0:
+                    # This API reports the absence of a profile as a warning.
+                    # Other failures must not be mistaken for an absent profile.
+                    if self.__get_error_code(handle) == TJERR_WARNING and \
+                            self.__get_error_string(handle) == (
+                                'tj3GetICCProfile(): No ICC profile data has '
+                                'been extracted'):
+                        return None
+                    self.__report_error(handle)
+                if icc_buf.value is None or icc_size.value == 0:
                     return None
-                self.__report_error(handle)
-            if icc_buf.value is None or icc_size.value == 0:
-                return None
-            result = self.__copy_from_buffer(icc_buf.value, icc_size.value)
-            self.__free(icc_buf)
-            return result
+                return self.__copy_from_buffer(icc_buf.value, icc_size.value)
+            finally:
+                if icc_buf.value is not None:
+                    self.__free(icc_buf)
         finally:
             self.__destroy(handle)
 
@@ -794,7 +826,7 @@ class TurboJPEG(object):
         handle : ctypes void pointer
             An active TurboJPEG compressor handle (TJINIT_COMPRESS).
         icc_buf : bytes
-            Raw ICC profile data to embed.
+            Raw ICC profile data to embed (at most 16,707,345 bytes).
 
         Raises
         ------
@@ -807,8 +839,7 @@ class TurboJPEG(object):
             raise NotImplementedError(
                 'tj3SetICCProfile is not available in the loaded libturbojpeg. '
                 'Please upgrade to libjpeg-turbo 3.1 or later.')
-        icc_view = self.__get_buffer_view(
-            icc_buf, "'icc_buf' argument", writable=False)
+        icc_view = self.__get_icc_buffer_view(icc_buf, "'icc_buf' argument")
         icc_array = np.frombuffer(icc_view, dtype=np.uint8)
         icc_addr = self.__getaddr(icc_array)
         status = self.__set_icc_profile(handle, icc_addr, icc_view.nbytes)
@@ -831,6 +862,7 @@ class TurboJPEG(object):
         dst : ndarray or None
             Destination array (optional). It must have the exact output shape,
             dtype uint8, C-contiguous storage, and writable memory.
+            Its memory must not overlap jpeg_buf.
             
         Returns
         -------
@@ -869,6 +901,10 @@ class TurboJPEG(object):
                     raise ValueError("'dst' array must be C-contiguous")
                 if not dst.flags.writeable:
                     raise ValueError("'dst' array must be writable")
+                if np.shares_memory(jpeg_array, dst):
+                    raise ValueError(
+                        "'dst' must not overlap 'jpeg_buf'; use a separate "
+                        "destination array or copy the input with bytes(jpeg_buf)")
                 img_array = dst
             dest_addr = self.__getaddr(img_array)
             pitch = img_array.strides[0]
@@ -1007,7 +1043,8 @@ class TurboJPEG(object):
         dst : writable contiguous buffer or None
             Destination buffer (optional). The buffer must be large enough for
             the worst-case JPEG size. If provided, TurboJPEG is not allowed to
-            reallocate it.
+            reallocate it. Its memory must not overlap the source image.
+            Use buffer_size(..., icc_profile=icc_profile) to include ICC markers.
         lossless : bool
             Enable lossless JPEG compression (default: False)
             When True, provides perfect reconstruction with larger file sizes.
@@ -1015,6 +1052,7 @@ class TurboJPEG(object):
             subsampling is automatically set to 4:4:4 by the library.
         icc_profile : bytes or None
             Raw ICC profile data to embed in the JPEG (optional).
+            At most 16,707,345 bytes, split across up to 255 APP2 markers.
             Requires TurboJPEG 3.1 or later with tj3SetICCProfile support.
         jpeg_colorspace : int or None
             JPEG storage colorspace (TJCS_*), independent of the input
@@ -1096,11 +1134,11 @@ class TurboJPEG(object):
                     self.__set_parameter(
                         handle, TJPARAM_COLORSPACE, jpeg_colorspace)
 
-            icc_size = 0
+            icc_storage_size = 0
             if icc_profile is not None:
-                icc_view = self.__get_buffer_view(
-                    icc_profile, "'icc_profile' argument", writable=False)
-                icc_size = icc_view.nbytes
+                icc_view = self.__get_icc_buffer_view(
+                    icc_profile, "'icc_profile' argument")
+                icc_storage_size = self.__icc_storage_size(icc_view.nbytes)
                 self.set_icc_profile(handle, icc_view)
 
             if dst is not None:
@@ -1108,7 +1146,7 @@ class TurboJPEG(object):
                     dst, "'dst' argument", writable=True)
                 buffer_subsample = TJSAMP_444 if lossless else jpeg_subsample
                 required_size = self.__buffer_size(
-                    width, height, buffer_subsample) + icc_size
+                    width, height, buffer_subsample) + icc_storage_size
                 if dst_view.nbytes < required_size:
                     raise ValueError(
                         "'dst' buffer is too small: requires at least {} bytes, "
@@ -1116,6 +1154,10 @@ class TurboJPEG(object):
                 if self.__set(handle, TJPARAM_NOREALLOC, 1) != 0:
                     self.__report_error(handle)
                 dst_array = np.frombuffer(dst_view, dtype=np.uint8)
+                if np.shares_memory(img_array, dst_array):
+                    raise ValueError(
+                        "'dst' must not overlap the source image; use a "
+                        "separate destination buffer or pass img_array.copy()")
                 jpeg_buf = dst_array.ctypes.data_as(c_void_p)
                 jpeg_size = c_size_t(dst_view.nbytes)
             else:
@@ -1777,15 +1819,26 @@ class TurboJPEG(object):
         finally:
             self.__destroy(handle)
 
-    def buffer_size(self, img_array, jpeg_subsample=TJSAMP_422):
-        """Get maximum number of bytes of compressed jpeg data"""
+    def buffer_size(self, img_array, jpeg_subsample=TJSAMP_422, icc_profile=None):
+        """Get the maximum JPEG size, including optional ICC data and markers.
+
+        Use the same jpeg_subsample and icc_profile as encode(). For lossless
+        encoding, use jpeg_subsample=TJSAMP_444 regardless of encode()'s
+        jpeg_subsample argument. ICC profiles must fit in 255 APP2 markers
+        (at most 16,707,345 bytes).
+        """
         jpeg_subsample = self.__validate_subsampling(jpeg_subsample)
         image = np.asarray(img_array)
         if image.ndim < 2:
             raise ValueError('Invalid shape for image data')
         height = self.__validate_positive_integer('height', image.shape[0])
         width = self.__validate_positive_integer('width', image.shape[1])
-        return self.__buffer_size(width, height, jpeg_subsample)
+        size = self.__buffer_size(width, height, jpeg_subsample)
+        if icc_profile is not None:
+            icc_view = self.__get_icc_buffer_view(
+                icc_profile, "'icc_profile' argument")
+            size += self.__icc_storage_size(icc_view.nbytes)
+        return size
 
     def __do_transform(self, handle, src_buf, src_size, number_of_transforms, transforms):
         """Do transform.
@@ -2432,9 +2485,11 @@ class TurboJPEG(object):
         error_code = self.__get_error_code(handle)
         error_message = self.__get_error_string(handle)
         # STOPONWARNING can leave output buffers only partially initialized.
-        # Only return a result when the native operation was allowed to finish.
+        # A previous warning can also mask a subsequent fatal error in the
+        # native severity code.  Its message must identify a known warning.
         if error_code == TJERR_WARNING and \
-                self.__get(handle, TJPARAM_STOPONWARNING) == 0:
+                self.__get(handle, TJPARAM_STOPONWARNING) == 0 and \
+                _RECOVERABLE_WARNING.fullmatch(error_message) is not None:
             warnings.warn(error_message)
             return
         raise IOError(error_message)
@@ -2653,6 +2708,22 @@ class TurboJPEG(object):
                 "'{}' argument must be a positive power of two".format(
                     argument_name))
         return value
+
+    @staticmethod
+    def __icc_storage_size(size):
+        chunks = (size + _ICC_CHUNK_SIZE - 1) // _ICC_CHUNK_SIZE
+        return size + chunks * _ICC_MARKER_OVERHEAD
+
+    @classmethod
+    def __get_icc_buffer_view(cls, value, argument_name):
+        view = cls.__get_buffer_view(value, argument_name, writable=False)
+        if view.nbytes > _MAX_ICC_PROFILE_SIZE:
+            raise ValueError(
+                '{} is too large: {} bytes; JPEG supports at most {} bytes '
+                'in 255 ICC APP2 markers. Use a smaller profile or omit '
+                'icc_profile (the JPEG will not contain the color profile).'
+                .format(argument_name, view.nbytes, _MAX_ICC_PROFILE_SIZE))
+        return view
 
     @staticmethod
     def __get_buffer_view(value, argument_name, writable):

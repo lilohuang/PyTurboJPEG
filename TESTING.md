@@ -236,6 +236,34 @@ requested canvas for reference; the corrected implementation rejects that
 unsupported operation. Open `test_output/crop_report/index.html` to inspect
 the images; tiny crops are enlarged with nearest-neighbor sampling.
 
+### Failure Paths and Buffer Ownership
+
+`tests/test_failure_paths.py` constructs damaged JPEGs from generated images.
+It covers baseline/progressive 8/12-bit and lossless 16-bit input, including a
+warning followed by a fatal marker error. Header parsing, packed/planar decode,
+recompression, and lossless transforms must raise instead of returning
+unfinished data. Recoverable warnings still produce the same complete output,
+and failures release native handles.
+
+Buffer tests exercise complete, partial, and one-byte input/output overlap,
+read-only input views, and adjacent/disjoint slices of the same allocation.
+Rejected overlap must leave storage unchanged. Successful buffer reuse is
+compared with an independently allocated result.
+
+ICC tests cover APP2 chunk boundaries, the 255-segment limit, marker overhead,
+caller-owned destination capacity, and exact profile roundtrips. Allocation
+and copy failures are injected to verify native-buffer cleanup. Tests requiring
+the ICC API are skipped on libjpeg-turbo 3.0.
+
+```bash
+pytest tests/test_failure_paths.py -v
+```
+
+The package CI job also extracts the built sdist into a temporary directory,
+checks that test helpers and image fixtures are included, installs its test
+dependencies in a fresh virtual environment, and runs the complete suite from
+that extracted source tree. This complements the installed-wheel smoke test.
+
 ## Test Statistics
 
 The suite changes whenever regression coverage is added, so this document does

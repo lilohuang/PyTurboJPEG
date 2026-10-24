@@ -174,7 +174,10 @@ JPEG because those modes have no corresponding lossless semantics.
 
 With `TJFLAG_STOPONWARNING`, a native warning raises `OSError` because the
 operation stops before its output is necessarily complete. Without that flag,
-recoverable warnings emit `UserWarning` and return the completed result.
+recognized recoverable warnings emit `UserWarning` and return the completed
+result. Fatal errors following a warning, and unrecognized native warning
+messages, raise `OSError` as well: some native versions retain warning severity
+after a fatal error.
 If decoding into `dst` fails, the destination may have been partially written
 and must not be treated as a complete image.
 
@@ -453,6 +456,12 @@ Errors in the JPEG itself or batch-wide options are reported for the whole call.
 
 ### In-Place Operations
 
+`dst` reuses an allocation. Its memory must not overlap the input: overlapping
+buffers raise `ValueError` before writing. Use a separate destination, or copy
+the input with `img_array.copy()` for encoding or `bytes(jpeg_buf)` for decoding.
+Copying uses additional memory proportional to the input size. Disjoint views
+of the same allocation are supported.
+
 ```python
 import numpy as np
 
@@ -470,6 +479,25 @@ with open('output.jpg', 'wb') as f:
     f.write(dest_buf[:n_bytes])
 # result is the same as dest_buf: id(result) == id(dest_buf)
 ```
+
+When embedding an ICC profile, include it in the size calculation so the buffer
+also has room for the APP2 segment headers:
+
+```python
+with open('profile.icc', 'rb') as f:
+    icc_profile = f.read()
+
+dest_buf = bytearray(jpeg.buffer_size(img_array, icc_profile=icc_profile))
+result, n_bytes = jpeg.encode(img_array, dst=dest_buf, icc_profile=icc_profile)
+```
+
+Use the same subsampling in `buffer_size()` and `encode()`. For lossless
+encoding, pass `TJSAMP_444` to `buffer_size()`. Adding only `len(icc_profile)` to
+the ordinary JPEG buffer size does not account for the segment headers.
+JPEG supports at most **16,707,345 bytes** of ICC data across 255 APP2 segments;
+larger profiles raise `ValueError`. Use a smaller profile, or omit it if the
+output does not need to retain that color profile. Embedding/extracting ICC
+profiles requires libjpeg-turbo 3.1 or later.
 
 ### EXIF Orientation Handling
 
